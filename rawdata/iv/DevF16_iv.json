@@ -1,0 +1,63 @@
+{
+  "coordinates": {
+    "fov_polygon_gds": [
+      {
+        "u": 726.3666972130973,
+        "v": 1318.2098973009408
+      },
+      {
+        "u": 926.5053678578772,
+        "v": 1321.8578831773807
+      },
+      {
+        "u": 923.6333027869024,
+        "v": 1471.7901026990594
+      },
+      {
+        "u": 723.4946321421224,
+        "v": 1468.1421168226195
+      }
+    ],
+    "gds": {
+      "u": 825.0,
+      "v": 1395.0
+    },
+    "stage_um": {
+      "x": -1632.4479166666672,
+      "y": -1163.282986111112
+    }
+  },
+  "created_at": "2026-05-25T04:27:29",
+  "csv_file": "DevF16_iv.csv",
+  "device": {
+    "col": 5,
+    "name": "DevF16",
+    "order": 501,
+    "row": 15
+  },
+  "format": "semi_auto_probe.autotest_result_metadata",
+  "json_file": "DevF16_iv.json",
+  "measurement": {
+    "bidirectional": false,
+    "current_limit_a": 0.0001,
+    "nplc": 1.0,
+    "output_off_after": true,
+    "output_statistics": true,
+    "output_terminal": "rear",
+    "resistance_method": "median_ratio",
+    "resource": "GPIB0::18::INSTR",
+    "source_delay_s": 1.0,
+    "start": 0.0,
+    "step": 0.3,
+    "stop": 6.0,
+    "sweep_mode": "voltage",
+    "voltage_limit_v": 20.0
+  },
+  "result_type": "iv_sweep",
+  "statistics": {
+    "resistance_method": "median_ratio",
+    "resistance_ohm": 256982866952.26028,
+    "sample_count": 21
+  },
+  "version": 1
+}
