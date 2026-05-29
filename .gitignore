@@ -1,5 +1,12 @@
 __pycache__/
-*.pyc
-output/*.csv
-output/*.json
-output/*.html
+*.py[cod]
+*.pyo
+
+.venv/
+.python-version
+
+rawdata/
+output/
+
+*.sqlite3
+*.log
