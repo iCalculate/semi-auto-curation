@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -86,6 +87,8 @@ class B1500CurveCanvas(QWidget):
         self.toolbar = NavigationToolbar2QT(self.canvas, self)
         self.ax = self.figure.add_subplot(111)
         self.theme = "light"
+        self.y_scale_mode = "linear"
+        self.rendered_device: B1500DeviceAnalysis | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.toolbar)
@@ -97,7 +100,11 @@ class B1500CurveCanvas(QWidget):
         self._style_axes()
         self.canvas.draw_idle()
 
+    def set_y_scale_mode(self, mode: str) -> None:
+        self.y_scale_mode = mode
+
     def render_device(self, device: B1500DeviceAnalysis | None) -> None:
+        self.rendered_device = device
         self.ax.clear()
         self._style_axes()
         if device is None:
@@ -107,17 +114,25 @@ class B1500CurveCanvas(QWidget):
         colors = THEMES[self.theme]["curve_colors"]
         all_y_values: list[float] = []
         for idx, curve in enumerate(device.curves):
-            all_y_values.extend(curve.current_values)
+            y_values = [abs(value) for value in curve.current_values] if self.y_scale_mode == "log" else list(curve.current_values)
+            all_y_values.extend(y_values)
             self.ax.plot(
                 curve.sweep_values,
-                curve.current_values,
+                y_values,
                 color=colors[idx % len(colors)],
                 linewidth=1.6,
                 label=curve.bias_label,
             )
+        if self.y_scale_mode == "log":
+            positive_y = [value for value in all_y_values if value > 0]
+            if positive_y:
+                self.ax.set_yscale("log")
+            all_y_values = positive_y
+        else:
+            self.ax.set_yscale("linear")
         y_scale, y_unit_label = _pick_engineering_unit(all_y_values, "A")
         self.ax.set_xlabel(device.sweep_axis_label.replace("_", " "))
-        self.ax.set_ylabel("Current")
+        self.ax.set_ylabel("Abs Current" if self.y_scale_mode == "log" else "Current")
         self.ax.set_title(f"{device.device_name} {MODE_LABELS.get(device.measurement_type, device.measurement_type)} Curves")
         self.ax.grid(color=THEMES[self.theme]["grid"], linewidth=0.5, alpha=0.5)
         self.ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_fixed_scale_with_unit(value, y_scale, y_unit_label)))
@@ -125,6 +140,20 @@ class B1500CurveCanvas(QWidget):
         if device.curves:
             self.ax.legend(loc="best", fontsize=8)
         self.canvas.draw_idle()
+
+    def copy_image_to_clipboard(self) -> None:
+        QApplication.clipboard().setPixmap(self.canvas.grab())
+
+    def rawdata_tsv(self) -> str:
+        lines = ["device\tcurve\tseries_type\tsweep_value\tcurrent_a"]
+        if self.rendered_device is None:
+            return "\n".join(lines)
+        for curve in self.rendered_device.curves:
+            series_type = "abs_current" if self.y_scale_mode == "log" else "current"
+            for sweep, current in zip(curve.sweep_values, curve.current_values):
+                value = abs(current) if self.y_scale_mode == "log" else current
+                lines.append(f"{self.rendered_device.device_name}\t{curve.bias_label}\t{series_type}\t{sweep:.12g}\t{value:.12g}")
+        return "\n".join(lines)
 
     def _style_axes(self) -> None:
         theme_cfg = THEMES[self.theme]
@@ -165,6 +194,10 @@ class B1500AnalysisPanel(QWidget):
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(["light", "dark"])
         self.theme_combo.setCurrentText("dark")
+        self.curve_y_scale_combo = QComboBox()
+        self.curve_y_scale_combo.addItems(["linear", "log"])
+        self.click_multi_select_button = QPushButton("Enable Click Multi-Select")
+        self.click_multi_select_button.setCheckable(True)
         self.leakage_floor_edit = QLineEdit("1e-12")
         self.output_tail_edit = QLineEdit("0.25")
         self.level_min_edit = QLineEdit("")
@@ -226,6 +259,8 @@ class B1500AnalysisPanel(QWidget):
         self.cmap_combo.currentTextChanged.connect(self.refresh_heatmap)
         self.scale_mode_combo.currentTextChanged.connect(self.refresh_heatmap)
         self.theme_combo.currentTextChanged.connect(self.set_theme)
+        self.curve_y_scale_combo.currentTextChanged.connect(self._refresh_curve_panel)
+        self.click_multi_select_button.toggled.connect(self._set_click_multi_select_mode)
         self.heatmap.selection_changed.connect(self._on_heatmap_selection_changed)
 
     def _build_source_box(self) -> QWidget:
@@ -267,6 +302,7 @@ class B1500AnalysisPanel(QWidget):
     def _build_selection_box(self) -> QWidget:
         box = QGroupBox("Selected Devices")
         layout = QVBoxLayout(box)
+        layout.addWidget(self.click_multi_select_button)
         layout.addWidget(self.selected_list, 2)
         clear_button = QPushButton("Clear Selection")
         clear_button.clicked.connect(self.clear_selection)
@@ -278,12 +314,32 @@ class B1500AnalysisPanel(QWidget):
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.addWidget(self.summary_table)
+        actions = QHBoxLayout()
+        copy_image_button = QPushButton("Copy Heatmap Image")
+        copy_image_button.clicked.connect(self._copy_heatmap_image)
+        copy_raw_button = QPushButton("Copy Heatmap Raw Data")
+        copy_raw_button.clicked.connect(self._copy_heatmap_rawdata)
+        actions.addWidget(copy_image_button)
+        actions.addWidget(copy_raw_button)
+        actions.addStretch(1)
+        layout.addLayout(actions)
         layout.addWidget(self.heatmap, 1)
         return container
 
     def _build_curve_panel(self) -> QWidget:
         box = QGroupBox("Selected Data")
         layout = QVBoxLayout(box)
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Y Scale"))
+        top.addWidget(self.curve_y_scale_combo)
+        copy_image_button = QPushButton("Copy Curve Image")
+        copy_image_button.clicked.connect(self._copy_curve_image)
+        copy_raw_button = QPushButton("Copy Curve Raw Data")
+        copy_raw_button.clicked.connect(self._copy_curve_rawdata)
+        top.addWidget(copy_image_button)
+        top.addWidget(copy_raw_button)
+        top.addStretch(1)
+        layout.addLayout(top)
         layout.addWidget(self.curve_plot)
         return box
 
@@ -444,6 +500,7 @@ class B1500AnalysisPanel(QWidget):
         focus = devices[-1] if devices else None
         for device in devices:
             self.selected_list.addItem(QListWidgetItem(f"{device.device_name}  ({_format_array_position(device.metadata.row, device.metadata.col)})"))
+        self.curve_plot.set_y_scale_mode(self.curve_y_scale_combo.currentText())
         self.curve_plot.render_device(focus)
         if focus is None:
             self.detail_text.clear()
@@ -520,6 +577,39 @@ class B1500AnalysisPanel(QWidget):
         if self.bundle_result and mode in self.bundle_result.results:
             self.refresh_heatmap()
             self._on_heatmap_selection_changed(self.heatmap.selected_devices())
+
+    def _refresh_curve_panel(self) -> None:
+        devices = self.heatmap.selected_devices()
+        focus = devices[-1] if devices else None
+        self.curve_plot.set_y_scale_mode(self.curve_y_scale_combo.currentText())
+        self.curve_plot.render_device(focus)
+
+    def _copy_heatmap_image(self) -> None:
+        self.heatmap.copy_image_to_clipboard()
+
+    def _copy_curve_image(self) -> None:
+        self.curve_plot.copy_image_to_clipboard()
+
+    def _copy_heatmap_rawdata(self) -> None:
+        QApplication.clipboard().setText(self.heatmap.rawdata_tsv())
+
+    def _copy_curve_rawdata(self) -> None:
+        QApplication.clipboard().setText(self.curve_plot.rawdata_tsv())
+
+    def _set_click_multi_select_mode(self, enabled: bool) -> None:
+        self.heatmap.set_click_multi_select_mode(enabled)
+        self.click_multi_select_button.setText(
+            "Disable Click Multi-Select" if enabled else "Enable Click Multi-Select"
+        )
+        self._apply_click_multi_select_button_style(self.click_multi_select_button, enabled)
+
+    def _apply_click_multi_select_button_style(self, button: QPushButton, enabled: bool) -> None:
+        if enabled:
+            button.setStyleSheet(
+                "QPushButton { background-color: #1f6f5f; color: #ffffff; border: 1px solid #34d399; font-weight: 600; }"
+            )
+        else:
+            button.setStyleSheet("")
 
     def _sync_metric_options(self) -> None:
         mode = self.mode_combo.currentText()

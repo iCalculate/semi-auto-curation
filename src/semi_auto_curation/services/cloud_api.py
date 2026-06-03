@@ -56,6 +56,52 @@ def get_session_detail(config: CloudServiceConfig, session_id: str) -> dict[str,
     return _request_json(config, f"/api/autotest/sessions/{quote(session_id, safe='')}")
 
 
+def update_session_tag(config: CloudServiceConfig, session_id: str, tag: str | None) -> dict[str, Any]:
+    payload = {"tag": tag, "label": tag, "annotation": tag}
+    normalized_session = quote(session_id, safe="")
+    candidates = [
+        (f"/api/autotest/sessions/{normalized_session}/tag", "PUT", {"tag": tag}),
+        (f"/api/autotest/sessions/{normalized_session}/tag", "PATCH", {"tag": tag}),
+        (f"/api/autotest/sessions/{normalized_session}/tags", "PUT", {"tag": tag}),
+        (f"/api/autotest/sessions/{normalized_session}/tags", "PATCH", {"tag": tag}),
+        (f"/api/autotest/sessions/{normalized_session}/label", "PUT", {"label": tag}),
+        (f"/api/autotest/sessions/{normalized_session}/label", "PATCH", {"label": tag}),
+        (f"/api/autotest/sessions/{normalized_session}/labels", "PUT", {"label": tag}),
+        (f"/api/autotest/sessions/{normalized_session}/labels", "PATCH", {"label": tag}),
+        (f"/api/autotest/sessions/{normalized_session}/metadata", "PATCH", payload),
+        (f"/api/autotest/sessions/{normalized_session}/annotations", "PATCH", {"tag": tag}),
+    ]
+    last_error: Exception | None = None
+    for api_path, method, body in candidates:
+        try:
+            text = _request_text(config, api_path, method=method, body=body)
+            if not text.strip():
+                return {"tag": tag}
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return {"tag": tag, "raw": text}
+        except Exception as exc:
+            last_error = exc
+    raise NotImplementedError("Cloud server does not expose a writable session tag API.") from last_error
+
+
+def load_local_session_tags(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {str(key): str(value) for key, value in payload.items() if isinstance(value, str)}
+
+
+def save_local_session_tags(path: Path, tags: dict[str, str]) -> None:
+    _write_json(path, tags)
+
+
 def sync_session_category(
     selection: CloudSessionSelection,
     output_dir: Path,
@@ -182,20 +228,26 @@ def _request_json(config: CloudServiceConfig, api_path: str) -> dict[str, Any]:
     return json.loads(text)
 
 
-def _request_text(config: CloudServiceConfig, api_path: str) -> str:
+def _request_text(config: CloudServiceConfig, api_path: str, method: str = "GET", body: Any | None = None) -> str:
     url = f"{config.base_url.rstrip('/')}{api_path}"
-    request = _build_request(url, config.access_token)
+    request = _build_request(url, config.access_token, method=method, body=body)
     with urlopen(request, timeout=config.timeout_s) as response:
         return response.read().decode("utf-8")
 
 
-def _build_request(url: str, access_token: str) -> Request:
+def _build_request(url: str, access_token: str, method: str = "GET", body: Any | None = None) -> Request:
+    data = None
+    if body is not None:
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     return Request(
         url,
+        data=data,
+        method=method,
         headers={
             "X-Access-Token": access_token,
             "User-Agent": "Mozilla/5.0",
             "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json; charset=utf-8",
         },
     )
 
@@ -210,6 +262,32 @@ def _file_matches(destination: Path, entry: dict[str, Any]) -> bool:
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def extract_session_tag(summary: dict[str, Any] | None, detail: dict[str, Any] | None = None) -> str:
+    for payload in [detail, summary]:
+        if not isinstance(payload, dict):
+            continue
+        tag = _extract_tag_from_payload(payload)
+        if tag:
+            return tag
+    return ""
+
+
+def _extract_tag_from_payload(payload: dict[str, Any]) -> str:
+    direct_keys = ("tag", "label", "session_tag", "session_label")
+    for key in direct_keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    for nested_key in ("metadata", "annotation", "annotations"):
+        nested = payload.get(nested_key)
+        if isinstance(nested, dict):
+            for key in direct_keys:
+                value = nested.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    return ""
 
 
 def _download_with_retry(request: Request, timeout: int, attempts: int = 3) -> bytes:

@@ -15,6 +15,7 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -148,7 +149,9 @@ class HeatmapCanvas(QWidget):
         self.cols = 0
         self.theme = "light"
         self.box_select_mode = False
+        self.click_multi_select_mode = False
         self.current_state: HeatmapRenderState | None = None
+        self.rendered_metric_values: dict[tuple[int, int], float | None] = {}
         self.canvas.mpl_connect("button_press_event", self._on_click)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -161,6 +164,9 @@ class HeatmapCanvas(QWidget):
         if self.selector:
             self.selector.set_active(enabled)
 
+    def set_click_multi_select_mode(self, enabled: bool) -> None:
+        self.click_multi_select_mode = enabled
+
     def set_theme(self, theme: str) -> None:
         self.theme = theme
         if self.current_state:
@@ -172,6 +178,7 @@ class HeatmapCanvas(QWidget):
         self.device_map = batch.device_map()
         self.rows = batch.summary.rows
         self.cols = batch.summary.cols
+        self.rendered_metric_values = {}
         values = np.full((self.rows, self.cols), np.nan, dtype=float)
         dummy_coords: list[tuple[int, int]] = []
         for (row, col), device in self.device_map.items():
@@ -179,6 +186,7 @@ class HeatmapCanvas(QWidget):
                 dummy_coords.append((row, col))
             else:
                 metric_value = device.metric_value(state.metric)
+                self.rendered_metric_values[(row, col)] = metric_value
                 if metric_value is not None and np.isfinite(metric_value):
                     values[row, col] = metric_value
 
@@ -254,6 +262,22 @@ class HeatmapCanvas(QWidget):
         self._draw_selection_overlay()
         self.selection_changed.emit(self.selected_devices())
 
+    def copy_image_to_clipboard(self) -> None:
+        QApplication.clipboard().setPixmap(self.canvas.grab())
+
+    def rawdata_tsv(self) -> str:
+        metric = self.current_state.metric if self.current_state else "value"
+        lines = ["row\tcol\tdevice\tmetric\tvalue\tis_dummy"]
+        for row in range(self.rows):
+            for col in range(self.cols):
+                device = self.device_map.get((row, col))
+                if device is None:
+                    continue
+                value = self.rendered_metric_values.get((row, col))
+                value_text = "" if value is None or not np.isfinite(value) else f"{value:.12g}"
+                lines.append(f"{row}\t{col}\t{device.device_name}\t{metric}\t{value_text}\t{int(device.is_dummy)}")
+        return "\n".join(lines)
+
     def selected_devices(self) -> list[IVDeviceAnalysis]:
         return [self.device_map[coord] for coord in sorted(self.selected_coords) if coord in self.device_map]
 
@@ -293,7 +317,7 @@ class HeatmapCanvas(QWidget):
         coord = (int(round(event.ydata)), int(round(event.xdata)))
         if coord not in self.device_map:
             return
-        additive = event.key == "control"
+        additive = self.click_multi_select_mode or event.key == "control"
         if additive:
             if coord in self.selected_coords:
                 self.selected_coords.remove(coord)
@@ -317,7 +341,7 @@ class HeatmapCanvas(QWidget):
                 coord = (row, col)
                 if coord in self.device_map:
                     coords.append(coord)
-        additive = eclick.key == "control" or erelease.key == "control"
+        additive = self.click_multi_select_mode or eclick.key == "control" or erelease.key == "control"
         if not additive:
             self.selected_coords = set(coords)
         else:
@@ -356,6 +380,8 @@ class IVCurveCanvas(QWidget):
         self.toolbar = NavigationToolbar2QT(self.canvas, self)
         self.ax = self.figure.add_subplot(111)
         self.theme = "light"
+        self.rendered_devices: list[IVDeviceAnalysis] = []
+        self.rendered_fit_mode = "Linear Fit"
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.toolbar)
@@ -368,6 +394,8 @@ class IVCurveCanvas(QWidget):
         self.canvas.draw_idle()
 
     def render_devices(self, devices: list[IVDeviceAnalysis], fit_mode: str) -> None:
+        self.rendered_devices = list(devices)
+        self.rendered_fit_mode = fit_mode
         self.ax.clear()
         self._style_axes()
         colors = THEMES[self.theme]["curve_colors"]
@@ -393,6 +421,20 @@ class IVCurveCanvas(QWidget):
         if devices:
             self.ax.legend(loc="best", fontsize=8)
         self.canvas.draw_idle()
+
+    def copy_image_to_clipboard(self) -> None:
+        QApplication.clipboard().setPixmap(self.canvas.grab())
+
+    def rawdata_tsv(self) -> str:
+        lines = ["device\tseries_type\tvoltage_v\tcurrent_a"]
+        for device in self.rendered_devices:
+            for point in device.points:
+                lines.append(f"{device.device_name}\traw\t{point.voltage_v:.12g}\t{point.current_a:.12g}")
+            if self.rendered_fit_mode == "Linear Fit" and device.fit_slope_a_per_v is not None and device.fit_intercept_a is not None:
+                for voltage in [device.fit_voltage_min, device.fit_voltage_max]:
+                    current = device.fit_slope_a_per_v * voltage + device.fit_intercept_a
+                    lines.append(f"{device.device_name}\tfit\t{voltage:.12g}\t{current:.12g}")
+        return "\n".join(lines)
 
     def _style_axes(self) -> None:
         theme_cfg = THEMES[self.theme]
@@ -446,6 +488,8 @@ class IVAnalysisPanel(QWidget):
         self.fit_curve_combo = QComboBox()
         self.fit_curve_combo.addItems(["Linear Fit", "Raw Only"])
         self.box_select_check = QCheckBox("Box Select Mode")
+        self.click_multi_select_button = QPushButton("Enable Click Multi-Select")
+        self.click_multi_select_button.setCheckable(True)
         self.cache_label = QLabel("Cache DB: pending")
         self.selected_list = QListWidget()
         self.detail_text = QTextEdit()
@@ -507,6 +551,7 @@ class IVAnalysisPanel(QWidget):
         self.theme_combo.currentTextChanged.connect(self.set_theme)
         self.fit_curve_combo.currentTextChanged.connect(self._refresh_curve_panel)
         self.box_select_check.toggled.connect(self.heatmap.set_box_select_mode)
+        self.click_multi_select_button.toggled.connect(self._set_click_multi_select_mode)
         self.heatmap.selection_changed.connect(self._on_heatmap_selection_changed)
 
     def _build_source_box(self) -> QWidget:
@@ -554,6 +599,7 @@ class IVAnalysisPanel(QWidget):
     def _build_selection_box(self) -> QWidget:
         box = QGroupBox("Selected Devices")
         layout = QVBoxLayout(box)
+        layout.addWidget(self.click_multi_select_button)
         layout.addWidget(self.selected_list, 2)
         layout.addWidget(self.cache_label)
         clear_button = QPushButton("Clear Selection")
@@ -566,6 +612,15 @@ class IVAnalysisPanel(QWidget):
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.addWidget(self.summary_table)
+        actions = QHBoxLayout()
+        copy_image_button = QPushButton("Copy Heatmap Image")
+        copy_image_button.clicked.connect(self._copy_heatmap_image)
+        copy_raw_button = QPushButton("Copy Heatmap Raw Data")
+        copy_raw_button.clicked.connect(self._copy_heatmap_rawdata)
+        actions.addWidget(copy_image_button)
+        actions.addWidget(copy_raw_button)
+        actions.addStretch(1)
+        layout.addLayout(actions)
         layout.addWidget(self.heatmap, 1)
         return container
 
@@ -575,6 +630,12 @@ class IVAnalysisPanel(QWidget):
         top = QHBoxLayout()
         top.addWidget(QLabel("Fit Curve"))
         top.addWidget(self.fit_curve_combo)
+        copy_image_button = QPushButton("Copy Curve Image")
+        copy_image_button.clicked.connect(self._copy_curve_image)
+        copy_raw_button = QPushButton("Copy Curve Raw Data")
+        copy_raw_button.clicked.connect(self._copy_curve_rawdata)
+        top.addWidget(copy_image_button)
+        top.addWidget(copy_raw_button)
         top.addStretch(1)
         layout.addLayout(top)
         layout.addWidget(self.iv_plot)
@@ -890,6 +951,33 @@ class IVAnalysisPanel(QWidget):
 
     def _refresh_curve_panel(self) -> None:
         self.iv_plot.render_devices(self.heatmap.selected_devices(), self.fit_curve_combo.currentText())
+
+    def _set_click_multi_select_mode(self, enabled: bool) -> None:
+        self.heatmap.set_click_multi_select_mode(enabled)
+        self.click_multi_select_button.setText(
+            "Disable Click Multi-Select" if enabled else "Enable Click Multi-Select"
+        )
+        self._apply_click_multi_select_button_style(self.click_multi_select_button, enabled)
+
+    def _copy_heatmap_image(self) -> None:
+        self.heatmap.copy_image_to_clipboard()
+
+    def _copy_curve_image(self) -> None:
+        self.iv_plot.copy_image_to_clipboard()
+
+    def _copy_heatmap_rawdata(self) -> None:
+        QApplication.clipboard().setText(self.heatmap.rawdata_tsv())
+
+    def _copy_curve_rawdata(self) -> None:
+        QApplication.clipboard().setText(self.iv_plot.rawdata_tsv())
+
+    def _apply_click_multi_select_button_style(self, button: QPushButton, enabled: bool) -> None:
+        if enabled:
+            button.setStyleSheet(
+                "QPushButton { background-color: #1f6f5f; color: #ffffff; border: 1px solid #34d399; font-weight: 600; }"
+            )
+        else:
+            button.setStyleSheet("")
 
     def _set_if_auto(self, field: QLineEdit, value: float | None, previous_auto: float | None, scientific: bool = False) -> None:
         if value is None:
