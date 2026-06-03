@@ -37,6 +37,9 @@ from PySide6.QtWidgets import (
 
 from semi_auto_curation.analysis.iv import build_iv_database, run_iv_batch
 from semi_auto_curation.models import IVAnalysisSettings, IVBatchResult, IVDeviceAnalysis
+from semi_auto_curation.services.cloud_api import CloudSyncResult
+from semi_auto_curation.ui.cloud_session_dialog import CloudSessionsDialog, CloudSyncWorker
+from semi_auto_curation.ui.parallel_preview import ParallelPreviewPanel
 from semi_auto_curation.utils.logging import log_error, log_info, log_warn
 from semi_auto_curation.utils.units import parse_si_number
 
@@ -368,20 +371,24 @@ class IVCurveCanvas(QWidget):
         self.ax.clear()
         self._style_axes()
         colors = THEMES[self.theme]["curve_colors"]
+        all_y_values: list[float] = []
         for idx, device in enumerate(devices):
             x = [point.voltage_v for point in device.points]
             y = [point.current_a for point in device.points]
+            all_y_values.extend(y)
             color = colors[idx % len(colors)]
             self.ax.plot(x, y, color=color, linewidth=1.6, marker=("o" if len(devices) <= 3 else None), markersize=3.5, label=device.device_name)
             if fit_mode == "Linear Fit" and device.fit_slope_a_per_v is not None and device.fit_intercept_a is not None:
                 fit_x = np.array([device.fit_voltage_min, device.fit_voltage_max], dtype=float)
                 fit_y = device.fit_slope_a_per_v * fit_x + device.fit_intercept_a
+                all_y_values.extend(fit_y.tolist())
                 self.ax.plot(fit_x, fit_y, color=color, linewidth=1.3, linestyle="--", alpha=0.9, label=f"{device.device_name} fit")
+        y_scale, y_unit_label = _pick_engineering_unit(all_y_values, "A")
         self.ax.set_xlabel("Voltage (V)")
-        self.ax.set_ylabel("Current (A)")
+        self.ax.set_ylabel("Current")
         self.ax.set_title("Selected IV Curves")
         self.ax.grid(color=THEMES[self.theme]["grid"], linewidth=0.5, alpha=0.5)
-        self.ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_engineering(value, "A")))
+        self.ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_fixed_scale_with_unit(value, y_scale, y_unit_label)))
         self.ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_engineering(value, "V")))
         if devices:
             self.ax.legend(loc="best", fontsize=8)
@@ -400,7 +407,7 @@ class IVCurveCanvas(QWidget):
 
 
 class IVAnalysisPanel(QWidget):
-    title = "IV"
+    title = "K2450 IV"
     status_changed = Signal(str)
     progress_changed = Signal(int)
 
@@ -411,6 +418,11 @@ class IVAnalysisPanel(QWidget):
         self.worker: IVBatchWorker | None = None
         self.cache_thread: QThread | None = None
         self.cache_worker: CacheBuildWorker | None = None
+        self.cloud_sync_thread: QThread | None = None
+        self.cloud_sync_worker: CloudSyncWorker | None = None
+        self.cloud_selection = None
+        self.cloud_cache_root: Path | None = None
+        self.cloud_detail: dict | None = None
         self._auto_fit_range: tuple[float | None, float | None] = (None, None)
         self._auto_dummy_range: tuple[float | None, float | None] = (None, None)
         self.source_edit = QLineEdit(str(Path.cwd() / "rawdata" / "iv"))
@@ -447,13 +459,16 @@ class IVAnalysisPanel(QWidget):
         self.summary_table.setFixedHeight(110)
         self.heatmap = HeatmapCanvas()
         self.iv_plot = IVCurveCanvas()
+        self.preview_panel = ParallelPreviewPanel("Parallel Files Preview")
+        self.cloud_source_label = QLabel("Source Mode: Local Folder")
+        self.cloud_source_label.setWordWrap(True)
         self._build_ui()
         self.set_theme("dark")
 
     def build_toolbar_actions(self) -> list[QAction]:
-        build_database = QAction("Load and Build Database", self)
+        build_database = QAction("Load K2450 Data and Build Database", self)
         build_database.triggered.connect(self.load_and_build_database)
-        analyze = QAction("Analyze IV", self)
+        analyze = QAction("Analyze K2450 IV", self)
         analyze.triggered.connect(self.run_analysis)
         clear = QAction("Clear Selection", self)
         clear.triggered.connect(self.clear_selection)
@@ -470,10 +485,15 @@ class IVAnalysisPanel(QWidget):
         left_layout.addWidget(self._build_heatmap_box())
         left_layout.addWidget(self._build_selection_box(), 1)
 
-        right_splitter = QSplitter(Qt.Horizontal)
-        right_splitter.addWidget(self._build_heatmap_panel())
-        right_splitter.addWidget(self._build_curve_panel())
-        right_splitter.setSizes([620, 620])
+        top_row = QSplitter(Qt.Horizontal)
+        top_row.addWidget(self._build_heatmap_panel())
+        top_row.addWidget(self._build_curve_panel())
+        top_row.setSizes([620, 620])
+
+        right_splitter = QSplitter(Qt.Vertical)
+        right_splitter.addWidget(top_row)
+        right_splitter.addWidget(self.preview_panel)
+        right_splitter.setSizes([760, 220])
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left)
@@ -490,11 +510,15 @@ class IVAnalysisPanel(QWidget):
         self.heatmap.selection_changed.connect(self._on_heatmap_selection_changed)
 
     def _build_source_box(self) -> QWidget:
-        box = QGroupBox("IV Source")
+        box = QGroupBox("K2450 IV Source")
         layout = QFormLayout(box)
         layout.addRow("Source Folder", self._browse_row(self.source_edit, self._choose_source))
         layout.addRow("Output Folder", self._browse_row(self.output_edit, self._choose_output))
-        build_button = QPushButton("Load and Build Database")
+        layout.addRow("Cloud Session", self.cloud_source_label)
+        cloud_button = QPushButton("Open Cloud Session List")
+        cloud_button.clicked.connect(self._open_cloud_sessions)
+        layout.addRow(cloud_button)
+        build_button = QPushButton("Load K2450 Data and Build Database")
         build_button.clicked.connect(self.load_and_build_database)
         layout.addRow(build_button)
         return box
@@ -507,7 +531,7 @@ class IVAnalysisPanel(QWidget):
         layout.addRow("Dummy Min |R|", self.dummy_r_min_edit)
         layout.addRow("Dummy Max |R|", self.dummy_r_max_edit)
         layout.addRow("Dummy Min R^2", self.dummy_r2_edit)
-        analyze_button = QPushButton("Analyze Data")
+        analyze_button = QPushButton("Analyze K2450 IV")
         analyze_button.clicked.connect(self.run_analysis)
         layout.addRow(analyze_button)
         return box
@@ -546,7 +570,7 @@ class IVAnalysisPanel(QWidget):
         return container
 
     def _build_curve_panel(self) -> QWidget:
-        box = QGroupBox("IV Curves")
+        box = QGroupBox("Selected Data")
         layout = QVBoxLayout(box)
         top = QHBoxLayout()
         top.addWidget(QLabel("Fit Curve"))
@@ -567,14 +591,68 @@ class IVAnalysisPanel(QWidget):
         return row
 
     def _choose_source(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Select IV Source Folder", self.source_edit.text())
+        folder = QFileDialog.getExistingDirectory(self, "Select 2450 IV Source Folder", self.source_edit.text())
         if folder:
+            self._clear_cloud_source()
             self.source_edit.setText(folder)
 
     def _choose_output(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Select Output Folder", self.output_edit.text())
         if folder:
             self.output_edit.setText(folder)
+
+    def _open_cloud_sessions(self) -> None:
+        dialog = CloudSessionsDialog(required_category="iv", parent=self)
+        if not dialog.exec():
+            return
+        selection = dialog.selected_session()
+        if selection is None:
+            return
+        output_dir = Path(self.output_edit.text().strip() or (Path.cwd() / "output"))
+        self.cloud_selection = selection
+        self.status_changed.emit("Loading...")
+        self.progress_changed.emit(0)
+        self.cloud_sync_thread = QThread(self)
+        self.cloud_sync_worker = CloudSyncWorker(selection, output_dir)
+        self.cloud_sync_worker.moveToThread(self.cloud_sync_thread)
+        self.cloud_sync_thread.started.connect(self.cloud_sync_worker.run)
+        self.cloud_sync_worker.finished.connect(self._cloud_sync_finished)
+        self.cloud_sync_worker.failed.connect(self._cloud_sync_failed)
+        self.cloud_sync_worker.progress.connect(self._on_cloud_sync_progress)
+        self.cloud_sync_worker.finished.connect(self.cloud_sync_thread.quit)
+        self.cloud_sync_worker.failed.connect(self.cloud_sync_thread.quit)
+        self.cloud_sync_thread.finished.connect(self.cloud_sync_worker.deleteLater)
+        self.cloud_sync_thread.finished.connect(self.cloud_sync_thread.deleteLater)
+        self.cloud_sync_thread.start()
+
+    def _cloud_sync_finished(self, result: object) -> None:
+        if not isinstance(result, CloudSyncResult):
+            self._cloud_sync_failed("Unexpected cloud sync payload.")
+            return
+        self.cloud_selection = result.selection
+        self.cloud_cache_root = result.cache_root
+        self.cloud_detail = result.detail
+        self.source_edit.setText(str(result.source_dir))
+        self.cloud_source_label.setText(f"Cloud Session: {result.selection.session_id}")
+        self.preview_panel.clear_preview("Cloud session synced. Run load/analyze, then select a device for preview.")
+        self.status_changed.emit("Finish")
+        self.progress_changed.emit(100)
+
+    def _cloud_sync_failed(self, message: str) -> None:
+        log_error(f"K2450 cloud sync failed: {message}")
+        QMessageBox.critical(self, "Cloud Sync Failed", message)
+        self.status_changed.emit("Busy...")
+        self.progress_changed.emit(0)
+
+    def _on_cloud_sync_progress(self, value: int, message: str) -> None:
+        self.progress_changed.emit(value)
+        self.status_changed.emit("Loading...")
+
+    def _clear_cloud_source(self) -> None:
+        self.cloud_selection = None
+        self.cloud_cache_root = None
+        self.cloud_detail = None
+        self.cloud_source_label.setText("Source Mode: Local Folder")
 
     def _current_database_settings(self) -> IVAnalysisSettings:
         cache_db_path = Path(self.output_edit.text().strip()) / ".cache" / "iv_cache.sqlite3"
@@ -723,11 +801,12 @@ class IVAnalysisPanel(QWidget):
 
     def clear_selection(self) -> None:
         self.heatmap.clear_selection()
+        self.preview_panel.clear_preview()
 
     def _on_heatmap_selection_changed(self, devices: list[IVDeviceAnalysis]) -> None:
         self.selected_list.clear()
         for device in devices:
-            text = f"{device.device_name}  (r={device.metadata.row}, c={device.metadata.col})"
+            text = f"{device.device_name}  ({_format_array_position(device.metadata.row, device.metadata.col)})"
             self.selected_list.addItem(QListWidgetItem(text))
         self.iv_plot.render_devices(devices, self.fit_curve_combo.currentText())
         if devices:
@@ -736,7 +815,7 @@ class IVAnalysisPanel(QWidget):
                 "\n".join(
                     [
                         f"Device: {focus.device_name}",
-                        f"Row/Col: {focus.metadata.row}, {focus.metadata.col}",
+                        f"Array Position: {_format_array_position(focus.metadata.row, focus.metadata.col)}",
                         f"Fit Window: {focus.fit_voltage_min} to {focus.fit_voltage_max} V",
                         f"Fit Points: {focus.fit_point_count}",
                         f"Fit Resistance: {focus.fit_resistance_ohm}",
@@ -750,8 +829,24 @@ class IVAnalysisPanel(QWidget):
                     ]
                 )
             )
+            if self.cloud_selection is not None and self.cloud_detail is not None and self.cloud_cache_root is not None:
+                self.preview_panel.update_cloud_preview(
+                    self.cloud_selection.config,
+                    self.cloud_selection.session_id,
+                    self.cloud_detail,
+                    self.cloud_cache_root,
+                    focus.device_name,
+                    self._remote_primary_paths([focus.csv_path, focus.json_path or ""]),
+                )
+            else:
+                self.preview_panel.update_preview(
+                    Path(self.source_edit.text().strip()),
+                    focus.device_name,
+                    [focus.csv_path, focus.json_path or ""],
+                )
         else:
             self.detail_text.clear()
+            self.preview_panel.clear_preview()
 
     def _populate_summary(self, batch: IVBatchResult) -> None:
         entries = [
@@ -802,6 +897,21 @@ class IVAnalysisPanel(QWidget):
         current = field.text().strip()
         if not current or (previous_auto is not None and current in {f"{previous_auto}", f"{previous_auto:.6e}", _format_number(previous_auto)}):
             field.setText(f"{value:.6e}" if scientific else _format_number(value))
+
+    def _remote_primary_paths(self, paths: list[str]) -> list[str]:
+        if self.cloud_cache_root is None:
+            return paths
+        remote_paths: list[str] = []
+        cache_root = self.cloud_cache_root.resolve()
+        for raw_path in paths:
+            if not raw_path:
+                continue
+            try:
+                relative = Path(raw_path).resolve().relative_to(cache_root)
+                remote_paths.append(relative.as_posix())
+            except Exception:
+                remote_paths.append(raw_path)
+        return remote_paths
 
 
 def _optional_float(value: str) -> float | None:
@@ -855,3 +965,55 @@ def _format_engineering(value: float, suffix: str) -> str:
         text = f"{scaled:.2f}"
     text = text.rstrip("0").rstrip(".")
     return f"{text}{chosen_prefix}{suffix}"
+
+
+def _pick_engineering_unit(values: list[float], suffix: str) -> tuple[float, str]:
+    finite = [abs(float(value)) for value in values if np.isfinite(value) and value != 0]
+    if not finite:
+        return 1.0, suffix
+    abs_value = max(finite)
+    prefixes = [
+        (1e-12, "p"),
+        (1e-9, "n"),
+        (1e-6, "u"),
+        (1e-3, "m"),
+        (1, ""),
+        (1e3, "k"),
+        (1e6, "M"),
+        (1e9, "G"),
+    ]
+    chosen_scale = 1.0
+    chosen_prefix = ""
+    for scale, prefix in prefixes:
+        if abs_value < scale * 1000:
+            chosen_scale = scale
+            chosen_prefix = prefix
+            break
+    return chosen_scale, f"{chosen_prefix}{suffix}"
+
+
+def _format_fixed_scale(value: float, scale: float) -> str:
+    scaled = value / scale if scale else value
+    abs_scaled = abs(scaled)
+    if abs_scaled >= 100:
+        text = f"{scaled:.0f}"
+    elif abs_scaled >= 10:
+        text = f"{scaled:.1f}"
+    else:
+        text = f"{scaled:.2f}"
+    return text.rstrip("0").rstrip(".")
+
+
+def _format_fixed_scale_with_unit(value: float, scale: float, unit_label: str) -> str:
+    text = _format_fixed_scale(value, scale)
+    if text in {"0", "-0"}:
+        return "0"
+    return f"{text}{unit_label}"
+
+
+def _format_array_position(row: int | None, col: int | None) -> str:
+    if row is None or col is None:
+        return "--"
+    if 0 <= row < 26:
+        return f"{chr(ord('A') + row)}{col + 1}"
+    return f"row={row}, col={col}"

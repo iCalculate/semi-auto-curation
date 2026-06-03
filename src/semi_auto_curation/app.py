@@ -5,9 +5,9 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+from semi_auto_curation.analysis.b1500 import b1500_bundle_to_dict, run_b1500_analysis
 from semi_auto_curation.analysis.iv import run_iv_batch
-from semi_auto_curation.models import IVAnalysisSettings
-from semi_auto_curation.ui.main_window import launch
+from semi_auto_curation.models import B1500AnalysisSettings, IVAnalysisSettings
 from semi_auto_curation.utils.logging import log_error, log_info, print_banner
 from semi_auto_curation.utils.units import parse_si_number
 
@@ -18,6 +18,8 @@ def main() -> None:
     print_banner()
     log_info("Semi-Auto Curation Studio entrypoint started.")
     if args.command in (None, "gui"):
+        from semi_auto_curation.ui.main_window import launch
+
         log_info("Launching GUI workbench.")
         launch()
         return
@@ -40,6 +42,17 @@ def main() -> None:
         )
         print(json.dumps({"summary": asdict(batch.summary)}, indent=2))
         return
+    if args.command == "analyze" and args.data_type == "b1500":
+        settings = B1500AnalysisSettings(
+            source_dir=Path(args.source),
+            output_dir=Path(args.output),
+            transfer_leakage_floor_a=args.transfer_floor,
+            output_fit_tail_fraction=args.output_tail_fraction,
+        )
+        log_info(f"Running CLI B1500 analysis. source={settings.source_dir} output={settings.output_dir}")
+        bundle = run_b1500_analysis(settings)
+        print(json.dumps(b1500_bundle_to_dict(bundle), indent=2))
+        return
     log_error("Unsupported command.")
     parser.error("Unsupported command.")
 
@@ -59,4 +72,9 @@ def _build_parser() -> argparse.ArgumentParser:
     iv.add_argument("--dummy-r-min", type=parse_si_number, default=None)
     iv.add_argument("--dummy-r-max", type=parse_si_number, default=None)
     iv.add_argument("--dummy-r2", type=parse_si_number, default=0.0)
+    b1500 = analyze_sub.add_parser("b1500", help="Analyze B1500 transfer/output sweep data.")
+    b1500.add_argument("--source", default=str(Path.cwd() / "rawdata" / "b1500"))
+    b1500.add_argument("--output", default=str(Path.cwd() / "output"))
+    b1500.add_argument("--transfer-floor", type=parse_si_number, default=1e-12)
+    b1500.add_argument("--output-tail-fraction", type=float, default=0.25)
     return parser
