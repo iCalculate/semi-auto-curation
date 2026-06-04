@@ -15,6 +15,7 @@ class AnalyzerDescriptor:
 
 
 ANALYZER_REGISTRY: list[AnalyzerDescriptor] = [
-    AnalyzerDescriptor(key="iv", label="K2450 IV", panel_factory=IVAnalysisPanel),
-    AnalyzerDescriptor(key="b1500", label="B1500 Trans/Output", panel_factory=B1500AnalysisPanel),
+    AnalyzerDescriptor(key="iv", label="K2450-IV", panel_factory=IVAnalysisPanel),
+    AnalyzerDescriptor(key="b1500_transfer", label="B1500-Trans", panel_factory=lambda: B1500AnalysisPanel("transfer")),
+    AnalyzerDescriptor(key="b1500_output", label="B1500-Output", panel_factory=lambda: B1500AnalysisPanel("output")),
 ]

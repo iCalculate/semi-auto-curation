@@ -52,6 +52,7 @@ from semi_auto_curation.utils.units import parse_si_number
 
 
 MODE_LABELS = {"transfer": "Transfer", "output": "Output"}
+PANEL_LABELS = {"transfer": "B1500-Trans", "output": "B1500-Output"}
 MODE_METRICS = {
     "transfer": [
         "transfer_on_off_ratio",
@@ -169,7 +170,10 @@ class B1500CurveCanvas(QWidget):
         else:
             self.ax.set_title(f"{len(devices)} Selected {MODE_LABELS.get(primary.measurement_type, primary.measurement_type)} Devices")
         self.ax.grid(color=THEMES[self.theme]["grid"], linewidth=0.5, alpha=0.5)
-        self.ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_fixed_scale_with_unit(value, y_scale, y_unit_label)))
+        if self.y_scale_mode == "log":
+            self.ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_engineering(value, "A")))
+        else:
+            self.ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_fixed_scale_with_unit(value, y_scale, y_unit_label)))
         self.ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_number(value)))
         if line_index:
             self.ax.legend(loc="best", fontsize=8)
@@ -207,8 +211,13 @@ class B1500AnalysisPanel(QWidget):
     status_changed = Signal(str)
     progress_changed = Signal(int)
 
-    def __init__(self) -> None:
+    def __init__(self, fixed_measurement_type: str | None = None) -> None:
         super().__init__()
+        if fixed_measurement_type not in {None, "transfer", "output"}:
+            raise ValueError(f"Unsupported B1500 measurement type: {fixed_measurement_type}")
+        self.fixed_measurement_type = fixed_measurement_type
+        self.panel_label = "B1500 Trans/Output" if fixed_measurement_type is None else PANEL_LABELS[fixed_measurement_type]
+        self.title = self.panel_label
         self.bundle_result: B1500AnalysisBundle | None = None
         self.worker_thread: QThread | None = None
         self.worker: B1500BatchWorker | None = None
@@ -221,7 +230,11 @@ class B1500AnalysisPanel(QWidget):
         self.output_edit = QLineEdit(str(Path.cwd() / "output"))
         self.metric_combo = QComboBox()
         self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["transfer", "output"])
+        mode_items = [fixed_measurement_type] if fixed_measurement_type is not None else ["transfer", "output"]
+        self.mode_combo.addItems(mode_items)
+        if fixed_measurement_type is not None:
+            self.mode_combo.setCurrentText(fixed_measurement_type)
+            self.mode_combo.setEnabled(False)
         self.cmap_combo = QComboBox()
         self.cmap_combo.addItems(["viridis", "plasma", "inferno", "magma", "cividis", "gray"])
         self.scale_mode_combo = QComboBox()
@@ -256,7 +269,7 @@ class B1500AnalysisPanel(QWidget):
         self.set_theme("dark")
 
     def build_toolbar_actions(self) -> list[QAction]:
-        analyze = QAction("Analyze B1500 Trans/Output", self)
+        analyze = QAction(f"Analyze {self.panel_label}", self)
         analyze.triggered.connect(self.run_analysis)
         clear = QAction("Clear Selection", self)
         clear.triggered.connect(self.clear_selection)
@@ -299,7 +312,7 @@ class B1500AnalysisPanel(QWidget):
         self.heatmap.selection_changed.connect(self._on_heatmap_selection_changed)
 
     def _build_source_box(self) -> QWidget:
-        box = QGroupBox("B1500 Trans/Output Source")
+        box = QGroupBox(f"{self.panel_label} Source")
         layout = QFormLayout(box)
         layout.addRow("Source Folder", self._browse_row(self.source_edit, self._choose_source))
         layout.addRow("Output Folder", self._browse_row(self.output_edit, self._choose_output))
@@ -307,7 +320,7 @@ class B1500AnalysisPanel(QWidget):
         cloud_button = QPushButton("Open Cloud Session List")
         cloud_button.clicked.connect(self._open_cloud_sessions)
         layout.addRow(cloud_button)
-        analyze_button = QPushButton("Analyze Trans/Output")
+        analyze_button = QPushButton(f"Analyze {self.panel_label}")
         analyze_button.clicked.connect(self.run_analysis)
         layout.addRow(analyze_button)
         return box
@@ -315,9 +328,12 @@ class B1500AnalysisPanel(QWidget):
     def _build_analysis_box(self) -> QWidget:
         box = QGroupBox("Analysis Settings")
         layout = QFormLayout(box)
-        layout.addRow("View Mode", self.mode_combo)
-        layout.addRow("Transfer Leakage Floor (A)", self.leakage_floor_edit)
-        layout.addRow("Output Tail Fraction", self.output_tail_edit)
+        if self.fixed_measurement_type is None:
+            layout.addRow("View Mode", self.mode_combo)
+        if self.fixed_measurement_type in {None, "transfer"}:
+            layout.addRow("Transfer Leakage Floor (A)", self.leakage_floor_edit)
+        if self.fixed_measurement_type in {None, "output"}:
+            layout.addRow("Output Tail Fraction", self.output_tail_edit)
         return box
 
     def _build_heatmap_box(self) -> QWidget:
@@ -488,7 +504,7 @@ class B1500AnalysisPanel(QWidget):
             self._analysis_failed("Unexpected result payload.")
             return
         self.bundle_result = result
-        if self.mode_combo.currentText() not in result.results:
+        if self.fixed_measurement_type is None and self.mode_combo.currentText() not in result.results:
             self.mode_combo.setCurrentText(next(iter(result.results)))
         self._populate_summary(self._current_batch())
         self.status_changed.emit("Finish")
@@ -590,7 +606,7 @@ class B1500AnalysisPanel(QWidget):
     def _current_batch(self) -> B1500BatchResult | None:
         if self.bundle_result is None:
             return None
-        return self.bundle_result.results.get(self.mode_combo.currentText())
+        return self.bundle_result.results.get(self._current_mode())
 
     def _on_mode_changed(self, mode: str) -> None:
         self._sync_metric_options()
@@ -631,7 +647,7 @@ class B1500AnalysisPanel(QWidget):
             button.setStyleSheet("")
 
     def _sync_metric_options(self) -> None:
-        mode = self.mode_combo.currentText()
+        mode = self._current_mode()
         metrics = MODE_METRICS[mode]
         current = self.metric_combo.currentText()
         self.metric_combo.blockSignals(True)
@@ -640,6 +656,9 @@ class B1500AnalysisPanel(QWidget):
         if current in metrics:
             self.metric_combo.setCurrentText(current)
         self.metric_combo.blockSignals(False)
+
+    def _current_mode(self) -> str:
+        return self.fixed_measurement_type or self.mode_combo.currentText()
 
     def _detail_lines(self, focus: B1500DeviceAnalysis) -> list[str]:
         lines = [

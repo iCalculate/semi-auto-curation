@@ -78,6 +78,18 @@ THEMES = {
     },
 }
 
+_ENGINEERING_PREFIXES: list[tuple[float, str]] = [
+    (1e-15, "f"),
+    (1e-12, "p"),
+    (1e-9, "n"),
+    (1e-6, "u"),
+    (1e-3, "m"),
+    (1.0, ""),
+    (1e3, "k"),
+    (1e6, "M"),
+    (1e9, "G"),
+]
+
 
 @dataclass(slots=True)
 class HeatmapRenderState:
@@ -449,7 +461,7 @@ class IVCurveCanvas(QWidget):
 
 
 class IVAnalysisPanel(QWidget):
-    title = "K2450 IV"
+    title = "K2450-IV"
     status_changed = Signal(str)
     progress_changed = Signal(int)
 
@@ -1024,34 +1036,12 @@ def _format_number(value: float) -> str:
 
 
 def _format_engineering(value: float, suffix: str) -> str:
+    if not np.isfinite(value):
+        return ""
     if value == 0:
         return f"0 {suffix}".strip()
-    abs_value = abs(value)
-    prefixes = [
-        (1e-12, "p"),
-        (1e-9, "n"),
-        (1e-6, "u"),
-        (1e-3, "m"),
-        (1, ""),
-        (1e3, "k"),
-        (1e6, "M"),
-        (1e9, "G"),
-    ]
-    chosen_scale = 1
-    chosen_prefix = ""
-    for scale, prefix in prefixes:
-        if abs_value < scale * 1000:
-            chosen_scale = scale
-            chosen_prefix = prefix
-            break
-    scaled = value / chosen_scale
-    if abs(scaled) >= 100:
-        text = f"{scaled:.0f}"
-    elif abs(scaled) >= 10:
-        text = f"{scaled:.1f}"
-    else:
-        text = f"{scaled:.2f}"
-    text = text.rstrip("0").rstrip(".")
+    chosen_scale, chosen_prefix = _choose_engineering_scale(abs(value))
+    text = _format_scaled_number(value / chosen_scale)
     return f"{text}{chosen_prefix}{suffix}"
 
 
@@ -1059,37 +1049,13 @@ def _pick_engineering_unit(values: list[float], suffix: str) -> tuple[float, str
     finite = [abs(float(value)) for value in values if np.isfinite(value) and value != 0]
     if not finite:
         return 1.0, suffix
-    abs_value = max(finite)
-    prefixes = [
-        (1e-12, "p"),
-        (1e-9, "n"),
-        (1e-6, "u"),
-        (1e-3, "m"),
-        (1, ""),
-        (1e3, "k"),
-        (1e6, "M"),
-        (1e9, "G"),
-    ]
-    chosen_scale = 1.0
-    chosen_prefix = ""
-    for scale, prefix in prefixes:
-        if abs_value < scale * 1000:
-            chosen_scale = scale
-            chosen_prefix = prefix
-            break
+    chosen_scale, chosen_prefix = _choose_engineering_scale(max(finite))
     return chosen_scale, f"{chosen_prefix}{suffix}"
 
 
 def _format_fixed_scale(value: float, scale: float) -> str:
     scaled = value / scale if scale else value
-    abs_scaled = abs(scaled)
-    if abs_scaled >= 100:
-        text = f"{scaled:.0f}"
-    elif abs_scaled >= 10:
-        text = f"{scaled:.1f}"
-    else:
-        text = f"{scaled:.2f}"
-    return text.rstrip("0").rstrip(".")
+    return _format_scaled_number(scaled)
 
 
 def _format_fixed_scale_with_unit(value: float, scale: float, unit_label: str) -> str:
@@ -1097,6 +1063,28 @@ def _format_fixed_scale_with_unit(value: float, scale: float, unit_label: str) -
     if text in {"0", "-0"}:
         return "0"
     return f"{text}{unit_label}"
+
+
+def _choose_engineering_scale(abs_value: float) -> tuple[float, str]:
+    if not np.isfinite(abs_value) or abs_value <= 0:
+        return 1.0, ""
+    for scale, prefix in reversed(_ENGINEERING_PREFIXES):
+        if abs_value >= scale:
+            return scale, prefix
+    return _ENGINEERING_PREFIXES[0]
+
+
+def _format_scaled_number(value: float) -> str:
+    abs_scaled = abs(value)
+    if abs_scaled >= 100:
+        text = f"{value:.0f}"
+    elif abs_scaled >= 10:
+        text = f"{value:.1f}"
+    else:
+        text = f"{value:.2f}"
+    if "." in text:
+        return text.rstrip("0").rstrip(".")
+    return text
 
 
 def _format_array_position(row: int | None, col: int | None) -> str:

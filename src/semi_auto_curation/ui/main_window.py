@@ -16,7 +16,9 @@ class MainWindow(QMainWindow):
         self.resize(1680, 980)
         self.panel_stack = QStackedWidget()
         self.analyzer_combo = QComboBox()
+        self.analyzer_toolbar = QToolBar("Analyzer")
         self.panels = []
+        self.panel_actions: list[list] = []
         self.status_label = QLabel("Loading...")
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
@@ -33,23 +35,29 @@ class MainWindow(QMainWindow):
         self.status_label.setText("Finish")
 
     def _build_shell(self) -> None:
-        toolbar = QToolBar("Analyzer")
-        toolbar.setMovable(False)
-        self.addToolBar(toolbar)
-        toolbar.addWidget(self.analyzer_combo)
+        self.analyzer_toolbar.setMovable(False)
+        self.addToolBar(self.analyzer_toolbar)
         for descriptor in ANALYZER_REGISTRY:
             panel = descriptor.panel_factory()
             self.panels.append(panel)
             self.panel_stack.addWidget(panel)
             self.analyzer_combo.addItem(descriptor.label, descriptor.key)
+            actions = panel.build_toolbar_actions() if hasattr(panel, "build_toolbar_actions") else []
+            self.panel_actions.append(actions)
             if hasattr(panel, "status_changed"):
                 panel.status_changed.connect(self.status_label.setText)
             if hasattr(panel, "progress_changed"):
                 panel.progress_changed.connect(self.progress_bar.setValue)
-            if hasattr(panel, "build_toolbar_actions"):
-                for action in panel.build_toolbar_actions():
-                    toolbar.addAction(action)
         self.analyzer_combo.currentIndexChanged.connect(self.panel_stack.setCurrentIndex)
+        self.analyzer_combo.currentIndexChanged.connect(self._refresh_toolbar_actions)
+        self._refresh_toolbar_actions(0)
+
+    def _refresh_toolbar_actions(self, index: int) -> None:
+        self.analyzer_toolbar.clear()
+        self.analyzer_toolbar.addWidget(self.analyzer_combo)
+        if 0 <= index < len(self.panel_actions):
+            for action in self.panel_actions[index]:
+                self.analyzer_toolbar.addAction(action)
 
     def _build_status_bar(self) -> None:
         status_bar = QStatusBar()
