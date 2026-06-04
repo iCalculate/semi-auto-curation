@@ -53,8 +53,35 @@ from semi_auto_curation.utils.units import parse_si_number
 
 MODE_LABELS = {"transfer": "Transfer", "output": "Output"}
 MODE_METRICS = {
-    "transfer": ["transfer_on_off_ratio", "transfer_gm_max_s", "transfer_on_current_a", "max_abs_gate_leakage_a"],
-    "output": ["output_max_current_a", "output_sat_resistance_ohm", "max_abs_gate_leakage_a"],
+    "transfer": [
+        "transfer_on_off_ratio",
+        "transfer_gm_max_s",
+        "transfer_subthreshold_swing_mv_dec",
+        "transfer_threshold_voltage_v",
+        "transfer_threshold_voltage_iref_v",
+        "transfer_threshold_voltage_gm_v",
+        "transfer_threshold_voltage_cross_v",
+        "transfer_turn_on_voltage_v",
+        "transfer_subthreshold_slope_dec_per_v",
+        "transfer_ss_fit_r2",
+        "transfer_von_fit_r2",
+        "transfer_on_current_a",
+        "transfer_off_current_a",
+        "max_abs_gate_leakage_a",
+    ],
+    "output": [
+        "output_on_resistance_ohm",
+        "output_gds_sat_s",
+        "output_ro_sat_ohm",
+        "output_lambda_1_v",
+        "output_early_voltage_v",
+        "output_knee_voltage_v",
+        "output_id_sat_a",
+        "output_linear_slope_a_per_v",
+        "output_max_current_a",
+        "output_sat_resistance_ohm",
+        "max_abs_gate_leakage_a",
+    ],
 }
 
 
@@ -88,7 +115,7 @@ class B1500CurveCanvas(QWidget):
         self.ax = self.figure.add_subplot(111)
         self.theme = "light"
         self.y_scale_mode = "linear"
-        self.rendered_device: B1500DeviceAnalysis | None = None
+        self.rendered_devices: list[B1500DeviceAnalysis] = []
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.toolbar)
@@ -103,26 +130,29 @@ class B1500CurveCanvas(QWidget):
     def set_y_scale_mode(self, mode: str) -> None:
         self.y_scale_mode = mode
 
-    def render_device(self, device: B1500DeviceAnalysis | None) -> None:
-        self.rendered_device = device
+    def render_devices(self, devices: list[B1500DeviceAnalysis]) -> None:
+        self.rendered_devices = list(devices)
         self.ax.clear()
         self._style_axes()
-        if device is None:
+        if not devices:
             self.ax.set_title("Selected B1500 Curves")
             self.canvas.draw_idle()
             return
         colors = THEMES[self.theme]["curve_colors"]
         all_y_values: list[float] = []
-        for idx, curve in enumerate(device.curves):
-            y_values = [abs(value) for value in curve.current_values] if self.y_scale_mode == "log" else list(curve.current_values)
-            all_y_values.extend(y_values)
-            self.ax.plot(
-                curve.sweep_values,
-                y_values,
-                color=colors[idx % len(colors)],
-                linewidth=1.6,
-                label=curve.bias_label,
-            )
+        line_index = 0
+        for device in devices:
+            for curve in device.curves:
+                y_values = [abs(value) for value in curve.current_values] if self.y_scale_mode == "log" else list(curve.current_values)
+                all_y_values.extend(y_values)
+                self.ax.plot(
+                    curve.sweep_values,
+                    y_values,
+                    color=colors[line_index % len(colors)],
+                    linewidth=1.6,
+                    label=f"{device.device_name} {curve.bias_label}",
+                )
+                line_index += 1
         if self.y_scale_mode == "log":
             positive_y = [value for value in all_y_values if value > 0]
             if positive_y:
@@ -131,13 +161,17 @@ class B1500CurveCanvas(QWidget):
         else:
             self.ax.set_yscale("linear")
         y_scale, y_unit_label = _pick_engineering_unit(all_y_values, "A")
-        self.ax.set_xlabel(device.sweep_axis_label.replace("_", " "))
+        primary = devices[-1]
+        self.ax.set_xlabel(primary.sweep_axis_label.replace("_", " "))
         self.ax.set_ylabel("Abs Current" if self.y_scale_mode == "log" else "Current")
-        self.ax.set_title(f"{device.device_name} {MODE_LABELS.get(device.measurement_type, device.measurement_type)} Curves")
+        if len(devices) == 1:
+            self.ax.set_title(f"{primary.device_name} {MODE_LABELS.get(primary.measurement_type, primary.measurement_type)} Curves")
+        else:
+            self.ax.set_title(f"{len(devices)} Selected {MODE_LABELS.get(primary.measurement_type, primary.measurement_type)} Devices")
         self.ax.grid(color=THEMES[self.theme]["grid"], linewidth=0.5, alpha=0.5)
         self.ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_fixed_scale_with_unit(value, y_scale, y_unit_label)))
         self.ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_number(value)))
-        if device.curves:
+        if line_index:
             self.ax.legend(loc="best", fontsize=8)
         self.canvas.draw_idle()
 
@@ -146,13 +180,14 @@ class B1500CurveCanvas(QWidget):
 
     def rawdata_tsv(self) -> str:
         lines = ["device\tcurve\tseries_type\tsweep_value\tcurrent_a"]
-        if self.rendered_device is None:
+        if not self.rendered_devices:
             return "\n".join(lines)
-        for curve in self.rendered_device.curves:
-            series_type = "abs_current" if self.y_scale_mode == "log" else "current"
-            for sweep, current in zip(curve.sweep_values, curve.current_values):
-                value = abs(current) if self.y_scale_mode == "log" else current
-                lines.append(f"{self.rendered_device.device_name}\t{curve.bias_label}\t{series_type}\t{sweep:.12g}\t{value:.12g}")
+        for device in self.rendered_devices:
+            for curve in device.curves:
+                series_type = "abs_current" if self.y_scale_mode == "log" else "current"
+                for sweep, current in zip(curve.sweep_values, curve.current_values):
+                    value = abs(current) if self.y_scale_mode == "log" else current
+                    lines.append(f"{device.device_name}\t{curve.bias_label}\t{series_type}\t{sweep:.12g}\t{value:.12g}")
         return "\n".join(lines)
 
     def _style_axes(self) -> None:
@@ -501,29 +536,14 @@ class B1500AnalysisPanel(QWidget):
         for device in devices:
             self.selected_list.addItem(QListWidgetItem(f"{device.device_name}  ({_format_array_position(device.metadata.row, device.metadata.col)})"))
         self.curve_plot.set_y_scale_mode(self.curve_y_scale_combo.currentText())
-        self.curve_plot.render_device(focus)
+        self.curve_plot.render_devices(devices)
         if focus is None:
             self.detail_text.clear()
             self.preview_panel.clear_preview()
             return
         self.detail_text.setPlainText(
             "\n".join(
-                [
-                    f"Device: {focus.device_name}",
-                    f"Array Position: {_format_array_position(focus.metadata.row, focus.metadata.col)}",
-                    f"Mode: {MODE_LABELS.get(focus.measurement_type, focus.measurement_type)}",
-                    f"Curves: {focus.curve_count}",
-                    f"Points: {focus.point_count}",
-                    f"Max |Id|: {focus.max_abs_current_a}",
-                    f"Max |Ig|: {focus.max_abs_gate_leakage_a}",
-                    f"Transfer On/Off: {focus.transfer_on_off_ratio}",
-                    f"Transfer gm max: {focus.transfer_gm_max_s}",
-                    f"Output Rout: {focus.output_sat_resistance_ohm}",
-                    "",
-                    f"CSV: {focus.csv_path}",
-                    f"Ig CSV: {focus.leakage_csv_path}",
-                    f"JSON: {focus.json_path}",
-                ]
+                self._detail_lines(focus)
             )
         )
         if self.cloud_selection is not None and self.cloud_detail is not None and self.cloud_cache_root is not None:
@@ -545,8 +565,8 @@ class B1500AnalysisPanel(QWidget):
     def _populate_summary(self, batch: B1500BatchResult | None) -> None:
         if batch is None:
             return
-        metric_a = batch.summary.mean_transfer_on_off_ratio if batch.summary.measurement_type == "transfer" else batch.summary.mean_max_abs_current_a
-        metric_b = batch.summary.mean_transfer_gm_max_s if batch.summary.measurement_type == "transfer" else batch.summary.mean_output_sat_resistance_ohm
+        metric_a = batch.summary.mean_transfer_on_off_ratio if batch.summary.measurement_type == "transfer" else batch.summary.mean_output_on_resistance_ohm
+        metric_b = batch.summary.mean_transfer_subthreshold_swing_mv_dec if batch.summary.measurement_type == "transfer" else batch.summary.mean_output_gds_sat_s
         entries = [
             (0, 0, str(batch.summary.total_devices)),
             (0, 1, "--" if batch.summary.mean_curve_count is None else f"{batch.summary.mean_curve_count:.2f}"),
@@ -580,9 +600,8 @@ class B1500AnalysisPanel(QWidget):
 
     def _refresh_curve_panel(self) -> None:
         devices = self.heatmap.selected_devices()
-        focus = devices[-1] if devices else None
         self.curve_plot.set_y_scale_mode(self.curve_y_scale_combo.currentText())
-        self.curve_plot.render_device(focus)
+        self.curve_plot.render_devices(devices)
 
     def _copy_heatmap_image(self) -> None:
         self.heatmap.copy_image_to_clipboard()
@@ -621,6 +640,54 @@ class B1500AnalysisPanel(QWidget):
         if current in metrics:
             self.metric_combo.setCurrentText(current)
         self.metric_combo.blockSignals(False)
+
+    def _detail_lines(self, focus: B1500DeviceAnalysis) -> list[str]:
+        lines = [
+            f"Device: {focus.device_name}",
+            f"Array Position: {_format_array_position(focus.metadata.row, focus.metadata.col)}",
+            f"Mode: {MODE_LABELS.get(focus.measurement_type, focus.measurement_type)}",
+            f"Curves: {focus.curve_count}",
+            f"Points: {focus.point_count}",
+            f"Max |Id|: {focus.max_abs_current_a}",
+            f"Max |Ig|: {focus.max_abs_gate_leakage_a}",
+        ]
+        if focus.measurement_type == "transfer":
+            lines.extend(
+                [
+                    f"Transfer On/Off: {focus.transfer_on_off_ratio}",
+                    f"Transfer gm max: {focus.transfer_gm_max_s}",
+                    f"Transfer SS (mV/dec): {focus.transfer_subthreshold_swing_mv_dec}",
+                    f"Transfer Vth (Ioff): {focus.transfer_threshold_voltage_v}",
+                    f"Transfer Vth (Iref): {focus.transfer_threshold_voltage_iref_v}",
+                    f"Transfer Vth (gm max): {focus.transfer_threshold_voltage_gm_v}",
+                    f"Transfer Vth (cross): {focus.transfer_threshold_voltage_cross_v}",
+                    f"Transfer Von: {focus.transfer_turn_on_voltage_v}",
+                    f"Transfer SS fit R2: {focus.transfer_ss_fit_r2}",
+                    f"Transfer Von fit R2: {focus.transfer_von_fit_r2}",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    f"Output Ron: {focus.output_on_resistance_ohm}",
+                    f"Output gds: {focus.output_gds_sat_s}",
+                    f"Output ro: {focus.output_ro_sat_ohm}",
+                    f"Output lambda: {focus.output_lambda_1_v}",
+                    f"Output Early V: {focus.output_early_voltage_v}",
+                    f"Output knee V: {focus.output_knee_voltage_v}",
+                    f"Output Id_sat: {focus.output_id_sat_a}",
+                    f"Output tail Rout: {focus.output_sat_resistance_ohm}",
+                ]
+            )
+        lines.extend(
+            [
+                "",
+                f"CSV: {focus.csv_path}",
+                f"Ig CSV: {focus.leakage_csv_path}",
+                f"JSON: {focus.json_path}",
+            ]
+        )
+        return lines
 
     def _remote_primary_paths(self, paths: list[str]) -> list[str]:
         if self.cloud_cache_root is None:

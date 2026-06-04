@@ -162,8 +162,26 @@ class B1500DeviceAnalysis:
     transfer_off_current_a: float | None
     transfer_on_off_ratio: float | None
     transfer_gm_max_s: float | None
+    transfer_subthreshold_swing_mv_dec: float | None
+    transfer_subthreshold_slope_dec_per_v: float | None
+    transfer_ss_fit_r2: float | None
+    transfer_threshold_voltage_v: float | None
+    transfer_threshold_voltage_iref_v: float | None
+    transfer_threshold_voltage_gm_v: float | None
+    transfer_threshold_voltage_cross_v: float | None
+    transfer_turn_on_voltage_v: float | None
+    transfer_von_fit_r2: float | None
     output_max_current_a: float | None
     output_sat_resistance_ohm: float | None
+    output_on_resistance_ohm: float | None
+    output_linear_slope_a_per_v: float | None
+    output_gds_sat_s: float | None
+    output_ro_sat_ohm: float | None
+    output_id_sat_a: float | None
+    output_lambda_1_v: float | None
+    output_early_voltage_v: float | None
+    output_knee_voltage_v: float | None
+    curve_features: list[dict[str, Any]] = field(default_factory=list)
     is_dummy: bool = False
     dummy_reason: str = ""
 
@@ -175,8 +193,25 @@ class B1500DeviceAnalysis:
             "transfer_off_current_a": self.transfer_off_current_a,
             "transfer_on_off_ratio": self.transfer_on_off_ratio,
             "transfer_gm_max_s": self.transfer_gm_max_s,
+            "transfer_subthreshold_swing_mv_dec": self.transfer_subthreshold_swing_mv_dec,
+            "transfer_subthreshold_slope_dec_per_v": self.transfer_subthreshold_slope_dec_per_v,
+            "transfer_ss_fit_r2": self.transfer_ss_fit_r2,
+            "transfer_threshold_voltage_v": self.transfer_threshold_voltage_v,
+            "transfer_threshold_voltage_iref_v": self.transfer_threshold_voltage_iref_v,
+            "transfer_threshold_voltage_gm_v": self.transfer_threshold_voltage_gm_v,
+            "transfer_threshold_voltage_cross_v": self.transfer_threshold_voltage_cross_v,
+            "transfer_turn_on_voltage_v": self.transfer_turn_on_voltage_v,
+            "transfer_von_fit_r2": self.transfer_von_fit_r2,
             "output_max_current_a": self.output_max_current_a,
             "output_sat_resistance_ohm": self.output_sat_resistance_ohm,
+            "output_on_resistance_ohm": self.output_on_resistance_ohm,
+            "output_linear_slope_a_per_v": self.output_linear_slope_a_per_v,
+            "output_gds_sat_s": self.output_gds_sat_s,
+            "output_ro_sat_ohm": self.output_ro_sat_ohm,
+            "output_id_sat_a": self.output_id_sat_a,
+            "output_lambda_1_v": self.output_lambda_1_v,
+            "output_early_voltage_v": self.output_early_voltage_v,
+            "output_knee_voltage_v": self.output_knee_voltage_v,
         }
         return metrics.get(metric)
 
@@ -194,7 +229,12 @@ class B1500BatchSummary:
     mean_max_abs_gate_leakage_a: float | None
     mean_transfer_on_off_ratio: float | None
     mean_transfer_gm_max_s: float | None
+    mean_transfer_subthreshold_swing_mv_dec: float | None
+    mean_transfer_threshold_voltage_v: float | None
+    mean_transfer_turn_on_voltage_v: float | None
     mean_output_sat_resistance_ohm: float | None
+    mean_output_on_resistance_ohm: float | None
+    mean_output_gds_sat_s: float | None
     exported_files: list[str]
 
 
