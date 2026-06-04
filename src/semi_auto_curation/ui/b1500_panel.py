@@ -271,9 +271,7 @@ class B1500AnalysisPanel(QWidget):
     def build_toolbar_actions(self) -> list[QAction]:
         analyze = QAction(f"Analyze {self.panel_label}", self)
         analyze.triggered.connect(self.run_analysis)
-        clear = QAction("Clear Selection", self)
-        clear.triggered.connect(self.clear_selection)
-        return [analyze, clear]
+        return [analyze]
 
     def _build_ui(self) -> None:
         root = QHBoxLayout(self)

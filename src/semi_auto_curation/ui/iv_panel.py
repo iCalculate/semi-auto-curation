@@ -526,9 +526,7 @@ class IVAnalysisPanel(QWidget):
         build_database.triggered.connect(self.load_and_build_database)
         analyze = QAction("Analyze K2450 IV", self)
         analyze.triggered.connect(self.run_analysis)
-        clear = QAction("Clear Selection", self)
-        clear.triggered.connect(self.clear_selection)
-        return [build_database, analyze, clear]
+        return [build_database, analyze]
 
     def _build_ui(self) -> None:
         root = QHBoxLayout(self)
