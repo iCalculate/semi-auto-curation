@@ -136,7 +136,7 @@ class B1500CurveCanvas(QWidget):
         self.ax.clear()
         self._style_axes()
         if not devices:
-            self.ax.set_title("Selected B1500 Curves")
+            self.ax.set_title("Selected B1500 Curves", fontsize=9)
             self.canvas.draw_idle()
             return
         colors = THEMES[self.theme]["curve_colors"]
@@ -150,7 +150,7 @@ class B1500CurveCanvas(QWidget):
                     curve.sweep_values,
                     y_values,
                     color=colors[line_index % len(colors)],
-                    linewidth=1.6,
+                    linewidth=1.5,
                     label=f"{device.device_name} {curve.bias_label}",
                 )
                 line_index += 1
@@ -163,20 +163,30 @@ class B1500CurveCanvas(QWidget):
             self.ax.set_yscale("linear")
         y_scale, y_unit_label = _pick_engineering_unit(all_y_values, "A")
         primary = devices[-1]
-        self.ax.set_xlabel(primary.sweep_axis_label.replace("_", " "))
-        self.ax.set_ylabel("Abs Current" if self.y_scale_mode == "log" else "Current")
-        if len(devices) == 1:
-            self.ax.set_title(f"{primary.device_name} {MODE_LABELS.get(primary.measurement_type, primary.measurement_type)} Curves")
+        x_label = primary.sweep_axis_label.replace("_", " ")
+        self.ax.set_xlabel(x_label, fontsize=8)
+        if self.y_scale_mode == "log":
+            self.ax.set_ylabel("|Current| (A)", fontsize=8)
         else:
-            self.ax.set_title(f"{len(devices)} Selected {MODE_LABELS.get(primary.measurement_type, primary.measurement_type)} Devices")
-        self.ax.grid(color=THEMES[self.theme]["grid"], linewidth=0.5, alpha=0.5)
+            self.ax.set_ylabel(f"Current ({y_unit_label})", fontsize=8)
+        if len(devices) == 1:
+            self.ax.set_title(
+                f"{primary.device_name} — {MODE_LABELS.get(primary.measurement_type, primary.measurement_type)} Curves",
+                fontsize=9,
+            )
+        else:
+            self.ax.set_title(
+                f"{len(devices)} × {MODE_LABELS.get(primary.measurement_type, primary.measurement_type)} Devices",
+                fontsize=9,
+            )
+        self.ax.grid(color=THEMES[self.theme]["grid"], linewidth=0.4, linestyle="--", alpha=0.4)
         if self.y_scale_mode == "log":
             self.ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_engineering(value, "A")))
         else:
-            self.ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_fixed_scale_with_unit(value, y_scale, y_unit_label)))
+            self.ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_fixed_scale(value, y_scale)))
         self.ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_number(value)))
         if line_index:
-            self.ax.legend(loc="best", fontsize=8)
+            self.ax.legend(loc="best", fontsize=7, frameon=False)
         self.canvas.draw_idle()
 
     def copy_image_to_clipboard(self) -> None:
@@ -198,12 +208,24 @@ class B1500CurveCanvas(QWidget):
         theme_cfg = THEMES[self.theme]
         self.figure.patch.set_facecolor(theme_cfg["figure"])
         self.ax.set_facecolor(theme_cfg["axes"])
-        self.ax.tick_params(colors=theme_cfg["text"])
-        for spine in self.ax.spines.values():
-            spine.set_color(theme_cfg["text"])
+        spine_color = theme_cfg.get("spine", theme_cfg["text"])
+        self.ax.spines["top"].set_visible(False)
+        self.ax.spines["right"].set_visible(False)
+        self.ax.spines["left"].set_color(spine_color)
+        self.ax.spines["left"].set_linewidth(0.8)
+        self.ax.spines["bottom"].set_color(spine_color)
+        self.ax.spines["bottom"].set_linewidth(0.8)
+        self.ax.tick_params(
+            colors=theme_cfg["text"], direction="in",
+            length=3, width=0.8, labelsize=7,
+        )
+        self.ax.tick_params(axis="both", which="minor", direction="in", length=1.5, width=0.6)
         self.ax.xaxis.label.set_color(theme_cfg["text"])
+        self.ax.xaxis.label.set_fontsize(8)
         self.ax.yaxis.label.set_color(theme_cfg["text"])
+        self.ax.yaxis.label.set_fontsize(8)
         self.ax.title.set_color(theme_cfg["text"])
+        self.ax.title.set_fontsize(9)
 
 
 class B1500AnalysisPanel(QWidget):

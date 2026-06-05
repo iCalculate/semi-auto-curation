@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -52,27 +53,29 @@ THEMES = {
         "figure": "#ffffff",
         "axes": "#ffffff",
         "text": "#111111",
-        "grid": "#d0d0d0",
-        "selection": "#ff8c00",
-        "dummy_fill": "#c0c0c0",
-        "dummy_cross": "#666666",
-        "curve_colors": ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#8c564b", "#e377c2", "#ff7f0e", "#17becf"],
+        "grid": "#cccccc",
+        "spine": "#555555",
+        "selection": "#e07b00",
+        "dummy_fill": "#c8c8c8",
+        "dummy_cross": "#777777",
+        "curve_colors": ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#8c564b", "#e377c2", "#e07b00", "#17becf"],
         "qt_stylesheet": "",
     },
     "dark": {
         "figure": "#171717",
         "axes": "#171717",
-        "text": "#f0f0f0",
-        "grid": "#444444",
-        "selection": "#ffd166",
-        "dummy_fill": "#707070",
-        "dummy_cross": "#8c8c8c",
+        "text": "#e8e8e8",
+        "grid": "#3a3a3a",
+        "spine": "#666666",
+        "selection": "#f5a623",
+        "dummy_fill": "#686868",
+        "dummy_cross": "#909090",
         "curve_colors": ["#61afef", "#e06c75", "#98c379", "#c678dd", "#d19a66", "#56b6c2", "#e5c07b", "#be5046"],
         "qt_stylesheet": """
-            QWidget { background-color: #1e1e1e; color: #f0f0f0; }
-            QLineEdit, QTextEdit, QListWidget, QTableWidget, QComboBox { background-color: #2a2a2a; color: #f0f0f0; }
-            QPushButton { background-color: #333333; color: #f0f0f0; }
-            QGroupBox { border: 1px solid #666666; margin-top: 8px; }
+            QWidget { background-color: #1e1e1e; color: #e8e8e8; }
+            QLineEdit, QTextEdit, QListWidget, QTableWidget, QComboBox { background-color: #2a2a2a; color: #e8e8e8; }
+            QPushButton { background-color: #333333; color: #e8e8e8; }
+            QGroupBox { border: 1px solid #555555; margin-top: 8px; }
             QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }
         """,
     },
@@ -99,6 +102,19 @@ class HeatmapRenderState:
     level_max: float | None
     theme: str
     scale_mode: str
+
+
+@dataclass
+class GenericDevice:
+    """Minimal device stub used by render_value_grid for non-IV workspaces."""
+    device_name: str
+    row: int
+    col: int
+    is_dummy: bool
+    _metric_value: float | None
+
+    def metric_value(self, _metric: str) -> float | None:
+        return self._metric_value
 
 
 class CacheBuildWorker(QObject):
@@ -233,37 +249,133 @@ class HeatmapCanvas(QWidget):
         else:
             norm = Normalize(vmin=vmin, vmax=vmax)
         self.image = self.ax.imshow(values, cmap=cmap, origin="lower", norm=norm, interpolation="nearest", aspect="equal")
-        self.ax.set_xlabel("Column")
-        self.ax.set_ylabel("Row")
-        self.ax.set_title("Device Array Heatmap")
+        self.ax.set_xlabel("Column", fontsize=8)
+        self.ax.set_ylabel("Row", fontsize=8)
+        self.ax.set_title("Device Array Heatmap", fontsize=9)
         self.ax.set_xlim(-0.5, self.cols - 0.5)
         self.ax.set_ylim(-0.5, self.rows - 0.5)
-        self.ax.grid(color=THEMES[state.theme]["grid"], linewidth=0.3, alpha=0.5)
+        self.ax.grid(color=THEMES[state.theme]["grid"], linewidth=0.4, linestyle="--", alpha=0.45)
 
         for row, col in dummy_coords:
-            rect = Rectangle((col - 0.5, row - 0.5), 1, 1, facecolor=THEMES[state.theme]["dummy_fill"], edgecolor="none", alpha=0.85)
+            rect = Rectangle((col - 0.5, row - 0.5), 1, 1, facecolor=THEMES[state.theme]["dummy_fill"], edgecolor="none", alpha=0.80)
             self.ax.add_patch(rect)
-            cross_alpha = 0.72 if state.theme == "dark" else 1.0
             self.ax.plot(
-                [col - 0.45, col + 0.45],
-                [row - 0.45, row + 0.45],
+                [col - 0.4, col + 0.4],
+                [row - 0.4, row + 0.4],
                 color=THEMES[state.theme]["dummy_cross"],
-                linewidth=1.0,
-                alpha=cross_alpha,
+                linewidth=0.9,
+                alpha=0.75,
             )
             self.ax.plot(
-                [col - 0.45, col + 0.45],
-                [row + 0.45, row - 0.45],
+                [col - 0.4, col + 0.4],
+                [row + 0.4, row - 0.4],
                 color=THEMES[state.theme]["dummy_cross"],
-                linewidth=1.0,
-                alpha=cross_alpha,
+                linewidth=0.9,
+                alpha=0.75,
             )
 
         if self.image is not None:
-            self.cbar = self.figure.colorbar(self.image, ax=self.ax)
-            self.cbar.ax.tick_params(colors=THEMES[state.theme]["text"])
-            self.cbar.outline.set_edgecolor(THEMES[state.theme]["text"])
-            self.cbar.set_label(state.metric, color=THEMES[state.theme]["text"])
+            self.cbar = self.figure.colorbar(self.image, ax=self.ax, shrink=0.85, aspect=22, pad=0.03)
+            self.cbar.ax.tick_params(colors=THEMES[state.theme]["text"], labelsize=7, length=3, width=0.6)
+            self.cbar.outline.set_edgecolor(THEMES[state.theme].get("spine", THEMES[state.theme]["text"]))
+            self.cbar.outline.set_linewidth(0.6)
+            self.cbar.set_label(state.metric, color=THEMES[state.theme]["text"], fontsize=7)
+
+        self._draw_selection_overlay()
+        self._ensure_selector()
+        self.canvas.draw_idle()
+
+    def render_value_grid(
+        self,
+        values: dict[str, float | None],
+        positions: dict[str, tuple[int, int]],
+        state: HeatmapRenderState,
+        title: str = "Heatmap",
+        dummy_names: set[str] | None = None,
+    ) -> None:
+        """Generic heatmap from {device_name: value} + {device_name: (row, col)}.
+
+        This is the extension point for image panels, script panels, and any future
+        custom workspace that computes arbitrary per-device scalar metrics.
+        """
+        if not positions:
+            return
+        dummy_names = dummy_names or set()
+        self.current_state = state
+        self.rows = max(r for r, _ in positions.values()) + 1
+        self.cols = max(c for _, c in positions.values()) + 1
+        self.rendered_metric_values = {}
+        self.device_map = {}
+
+        value_grid = np.full((self.rows, self.cols), np.nan, dtype=float)
+        dummy_coords: list[tuple[int, int]] = []
+
+        for name, (row, col) in positions.items():
+            value = values.get(name)
+            is_dummy = name in dummy_names or value is None or (
+                isinstance(value, float) and not np.isfinite(value)
+            )
+            device = GenericDevice(
+                device_name=name, row=row, col=col,
+                is_dummy=is_dummy, _metric_value=value,
+            )
+            self.device_map[(row, col)] = device
+            if not is_dummy and value is not None and np.isfinite(value):
+                value_grid[row, col] = value
+                self.rendered_metric_values[(row, col)] = value
+            elif is_dummy:
+                dummy_coords.append((row, col))
+
+        self.figure.clear()
+        self.ax = self.figure.add_subplot(111)
+        self.cbar = None
+        self.image = None
+        self.selector = None
+        self._style_axes()
+
+        cmap = matplotlib.colormaps[state.cmap].copy()
+        cmap.set_bad(color=THEMES[state.theme]["axes"])
+        vmin, vmax = state.level_min, state.level_max
+        finite = value_grid[np.isfinite(value_grid)]
+        if finite.size:
+            if vmin is None:
+                vmin = float(np.nanmin(finite))
+            if vmax is None:
+                vmax = float(np.nanmax(finite))
+
+        norm = None
+        if state.scale_mode == "log":
+            pos = value_grid[np.isfinite(value_grid) & (value_grid > 0)]
+            if pos.size:
+                vmin = max(vmin or float(pos.min()), np.finfo(float).tiny)
+                vmax = max(vmax or float(pos.max()), vmin * 10.0)
+                norm = LogNorm(vmin=vmin, vmax=vmax)
+        if norm is None:
+            norm = Normalize(vmin=vmin, vmax=vmax)
+
+        self.image = self.ax.imshow(
+            value_grid, cmap=cmap, origin="lower",
+            norm=norm, interpolation="nearest", aspect="equal",
+        )
+        self.ax.set_xlabel("Column", fontsize=8)
+        self.ax.set_ylabel("Row", fontsize=8)
+        self.ax.set_title(title, fontsize=9)
+        self.ax.set_xlim(-0.5, self.cols - 0.5)
+        self.ax.set_ylim(-0.5, self.rows - 0.5)
+        self.ax.grid(color=THEMES[state.theme]["grid"], linewidth=0.4, linestyle="--", alpha=0.45)
+
+        for row, col in dummy_coords:
+            self.ax.add_patch(Rectangle(
+                (col - 0.5, row - 0.5), 1, 1,
+                facecolor=THEMES[state.theme]["dummy_fill"], edgecolor="none", alpha=0.80,
+            ))
+
+        if self.image is not None:
+            self.cbar = self.figure.colorbar(self.image, ax=self.ax, shrink=0.85, aspect=22, pad=0.03)
+            self.cbar.ax.tick_params(colors=THEMES[state.theme]["text"], labelsize=7, length=3, width=0.6)
+            self.cbar.outline.set_edgecolor(THEMES[state.theme].get("spine", THEMES[state.theme]["text"]))
+            self.cbar.outline.set_linewidth(0.6)
+            self.cbar.set_label(state.metric, color=THEMES[state.theme]["text"], fontsize=7)
 
         self._draw_selection_overlay()
         self._ensure_selector()
@@ -297,12 +409,21 @@ class HeatmapCanvas(QWidget):
         theme_cfg = THEMES[self.current_state.theme if self.current_state else self.theme]
         self.figure.patch.set_facecolor(theme_cfg["figure"])
         self.ax.set_facecolor(theme_cfg["axes"])
-        self.ax.tick_params(colors=theme_cfg["text"])
+        spine_color = theme_cfg.get("spine", theme_cfg["text"])
         for spine in self.ax.spines.values():
-            spine.set_color(theme_cfg["text"])
+            spine.set_color(spine_color)
+            spine.set_linewidth(0.8)
+        self.ax.tick_params(
+            colors=theme_cfg["text"], direction="in",
+            length=3, width=0.8, labelsize=7,
+        )
+        self.ax.tick_params(axis="both", which="minor", direction="in", length=1.5, width=0.6)
         self.ax.xaxis.label.set_color(theme_cfg["text"])
+        self.ax.xaxis.label.set_fontsize(8)
         self.ax.yaxis.label.set_color(theme_cfg["text"])
+        self.ax.yaxis.label.set_fontsize(8)
         self.ax.title.set_color(theme_cfg["text"])
+        self.ax.title.set_fontsize(9)
 
     def _ensure_selector(self) -> None:
         if self.selector is None:
@@ -412,26 +533,31 @@ class IVCurveCanvas(QWidget):
         self._style_axes()
         colors = THEMES[self.theme]["curve_colors"]
         all_y_values: list[float] = []
+        show_markers = len(devices) <= 3
         for idx, device in enumerate(devices):
             x = [point.voltage_v for point in device.points]
             y = [point.current_a for point in device.points]
             all_y_values.extend(y)
             color = colors[idx % len(colors)]
-            self.ax.plot(x, y, color=color, linewidth=1.6, marker=("o" if len(devices) <= 3 else None), markersize=3.5, label=device.device_name)
+            self.ax.plot(
+                x, y, color=color, linewidth=1.5,
+                marker=("o" if show_markers else None), markersize=3.0,
+                label=device.device_name,
+            )
             if fit_mode == "Linear Fit" and device.fit_slope_a_per_v is not None and device.fit_intercept_a is not None:
                 fit_x = np.array([device.fit_voltage_min, device.fit_voltage_max], dtype=float)
                 fit_y = device.fit_slope_a_per_v * fit_x + device.fit_intercept_a
                 all_y_values.extend(fit_y.tolist())
-                self.ax.plot(fit_x, fit_y, color=color, linewidth=1.3, linestyle="--", alpha=0.9, label=f"{device.device_name} fit")
+                self.ax.plot(fit_x, fit_y, color=color, linewidth=1.0, linestyle="--", alpha=0.85, label=f"{device.device_name} fit")
         y_scale, y_unit_label = _pick_engineering_unit(all_y_values, "A")
-        self.ax.set_xlabel("Voltage (V)")
-        self.ax.set_ylabel("Current")
-        self.ax.set_title("Selected IV Curves")
-        self.ax.grid(color=THEMES[self.theme]["grid"], linewidth=0.5, alpha=0.5)
-        self.ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_fixed_scale_with_unit(value, y_scale, y_unit_label)))
+        self.ax.set_xlabel("Voltage (V)", fontsize=8)
+        self.ax.set_ylabel(f"Current ({y_unit_label})", fontsize=8)
+        self.ax.set_title("Selected IV Curves", fontsize=9)
+        self.ax.grid(color=THEMES[self.theme]["grid"], linewidth=0.4, linestyle="--", alpha=0.4)
+        self.ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_fixed_scale(value, y_scale)))
         self.ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _pos: _format_engineering(value, "V")))
         if devices:
-            self.ax.legend(loc="best", fontsize=8)
+            self.ax.legend(loc="best", fontsize=7, frameon=False)
         self.canvas.draw_idle()
 
     def copy_image_to_clipboard(self) -> None:
@@ -452,12 +578,24 @@ class IVCurveCanvas(QWidget):
         theme_cfg = THEMES[self.theme]
         self.figure.patch.set_facecolor(theme_cfg["figure"])
         self.ax.set_facecolor(theme_cfg["axes"])
-        self.ax.tick_params(colors=theme_cfg["text"])
-        for spine in self.ax.spines.values():
-            spine.set_color(theme_cfg["text"])
+        spine_color = theme_cfg.get("spine", theme_cfg["text"])
+        self.ax.spines["top"].set_visible(False)
+        self.ax.spines["right"].set_visible(False)
+        self.ax.spines["left"].set_color(spine_color)
+        self.ax.spines["left"].set_linewidth(0.8)
+        self.ax.spines["bottom"].set_color(spine_color)
+        self.ax.spines["bottom"].set_linewidth(0.8)
+        self.ax.tick_params(
+            colors=theme_cfg["text"], direction="in",
+            length=3, width=0.8, labelsize=7,
+        )
+        self.ax.tick_params(axis="both", which="minor", direction="in", length=1.5, width=0.6)
         self.ax.xaxis.label.set_color(theme_cfg["text"])
+        self.ax.xaxis.label.set_fontsize(8)
         self.ax.yaxis.label.set_color(theme_cfg["text"])
+        self.ax.yaxis.label.set_fontsize(8)
         self.ax.title.set_color(theme_cfg["text"])
+        self.ax.title.set_fontsize(9)
 
 
 class IVAnalysisPanel(QWidget):
@@ -504,8 +642,10 @@ class IVAnalysisPanel(QWidget):
         self.click_multi_select_button.setCheckable(True)
         self.cache_label = QLabel("Cache DB: pending")
         self.selected_list = QListWidget()
+        self.selected_list.setMaximumHeight(120)
         self.detail_text = QTextEdit()
         self.detail_text.setReadOnly(True)
+        self.detail_text.setMaximumHeight(160)
         self.summary_table = QTableWidget(2, 4)
         self.summary_table.setVerticalHeaderLabels(["Count", "Mean"])
         self.summary_table.setHorizontalHeaderLabels(["Devices", "Dummy", "Fit |R| (Ohm)", "Fit R^2"])
@@ -532,12 +672,19 @@ class IVAnalysisPanel(QWidget):
         root = QHBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
 
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
+        left_inner = QWidget()
+        left_layout = QVBoxLayout(left_inner)
+        left_layout.setContentsMargins(0, 0, 4, 0)
         left_layout.addWidget(self._build_source_box())
         left_layout.addWidget(self._build_fit_box())
         left_layout.addWidget(self._build_heatmap_box())
-        left_layout.addWidget(self._build_selection_box(), 1)
+        left_layout.addWidget(self._build_selection_box())
+        left_layout.addStretch()
+
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left_inner)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         top_row = QSplitter(Qt.Horizontal)
         top_row.addWidget(self._build_heatmap_panel())
@@ -550,7 +697,7 @@ class IVAnalysisPanel(QWidget):
         right_splitter.setSizes([760, 220])
 
         splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(left)
+        splitter.addWidget(left_scroll)
         splitter.addWidget(right_splitter)
         splitter.setSizes([340, 980])
         root.addWidget(splitter)
