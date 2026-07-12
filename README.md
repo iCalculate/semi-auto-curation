@@ -30,6 +30,10 @@ The application is built as a multi-workspace Qt workbench. Users can open IV, B
 
 ## Preview
 
+> [!NOTE]
+> The image slots below are intentionally reserved. Replace the files under
+> `docs/assets/screenshots/` with real application screenshots when they are ready.
+
 <p align="center">
   <img src="docs/assets/screenshots/main-workbench.png" alt="Semi-Auto Curation Studio main workbench screenshot" width="920">
   <br>
@@ -150,12 +154,14 @@ To add another analysis mode, create a panel under `ui/`, implement the expected
 
 ## Screenshot Assets
 
-Reserved screenshot paths:
+The README is prepared for four project screenshots. Add the image files below when the final screenshots are ready:
 
-- `docs/assets/screenshots/main-workbench.png`
-- `docs/assets/screenshots/window-layout.png`
-- `docs/assets/screenshots/k2450-iv-workspace.png`
-- `docs/assets/screenshots/b1500-workspace.png`
+| File To Add | Recommended Screenshot |
+| --- | --- |
+| `docs/assets/screenshots/main-workbench.png` | Full application overview with the Workspaces dock, toolbar, active workspace window, heatmap, curve viewer, and status bar visible. |
+| `docs/assets/screenshots/window-layout.png` | Annotated UI layout that labels the Workspaces dock, MDI workspace area, source/settings panel, heatmap panel, curve panel, and selected-device detail area. |
+| `docs/assets/screenshots/k2450-iv-workspace.png` | K2450-IV workspace after analysis, showing the fitted-resistance heatmap and selected raw IV curves. |
+| `docs/assets/screenshots/b1500-workspace.png` | B1500 transfer or output workspace after analysis, showing a metric heatmap and multi-curve preview. |
 
 ## License
 
