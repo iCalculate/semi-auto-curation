@@ -30,20 +30,16 @@ The application is built as a multi-workspace Qt workbench. Users can open IV, B
 
 ## Preview
 
-> [!NOTE]
-> The image slots below are intentionally reserved. Replace the files under
-> `docs/assets/screenshots/` with real application screenshots when they are ready.
-
 <p align="center">
   <img src="docs/assets/screenshots/main-workbench.png" alt="Semi-Auto Curation Studio main workbench screenshot" width="920">
   <br>
-  <em>Screenshot placeholder: main workbench with the Workspaces dock, active analysis window, heatmap, curve viewer, and selected-device details.</em>
+  <em>Main K2450-IV workbench with workspace navigation, source settings, device-array heatmap, selected IV curves, and analysis status.</em>
 </p>
 
 <p align="center">
-  <img src="docs/assets/screenshots/window-layout.png" alt="Annotated application layout screenshot" width="920">
+  <img src="docs/assets/screenshots/cloud-autotest-session.png" alt="Cloud autotest session browser screenshot" width="920">
   <br>
-  <em>Screenshot placeholder: annotated interface layout showing the dock, toolbar, MDI workspace, heatmap, curve panel, and status bar.</em>
+  <em>Cloud autotest session browser for reviewing remote measurement packages, category counts, tags, and session details before syncing into a workspace.</em>
 </p>
 
 ## Features
@@ -61,12 +57,6 @@ The application is built as a multi-workspace Qt workbench. Users can open IV, B
 
 ### K2450-IV
 
-<p align="center">
-  <img src="docs/assets/screenshots/k2450-iv-workspace.png" alt="K2450 IV workspace screenshot" width="920">
-  <br>
-  <em>Screenshot placeholder: K2450-IV analysis with resistance heatmap and selected raw IV curves.</em>
-</p>
-
 The `K2450-IV` workspace loads IV sweep files, builds a local cache database, applies a configurable linear-fit voltage window, and extracts resistance/current metrics for each device in an array.
 
 Key outputs:
@@ -75,12 +65,6 @@ Key outputs:
 - `iv_fit_detail.json`
 
 ### B1500 Transfer And Output
-
-<p align="center">
-  <img src="docs/assets/screenshots/b1500-workspace.png" alt="B1500 workspace screenshot" width="920">
-  <br>
-  <em>Screenshot placeholder: B1500 transfer/output workspace with metric heatmap and multi-curve preview.</em>
-</p>
 
 The B1500 workspaces separate transfer and output analysis while sharing a common review pattern: select a source, compute device-level metrics, inspect heatmaps, and review selected curves.
 
@@ -154,14 +138,12 @@ To add another analysis mode, create a panel under `ui/`, implement the expected
 
 ## Screenshot Assets
 
-The README is prepared for four project screenshots. Add the image files below when the final screenshots are ready:
+The README currently uses two screenshots:
 
-| File To Add | Recommended Screenshot |
+| File | Shown In README |
 | --- | --- |
-| `docs/assets/screenshots/main-workbench.png` | Full application overview with the Workspaces dock, toolbar, active workspace window, heatmap, curve viewer, and status bar visible. |
-| `docs/assets/screenshots/window-layout.png` | Annotated UI layout that labels the Workspaces dock, MDI workspace area, source/settings panel, heatmap panel, curve panel, and selected-device detail area. |
-| `docs/assets/screenshots/k2450-iv-workspace.png` | K2450-IV workspace after analysis, showing the fitted-resistance heatmap and selected raw IV curves. |
-| `docs/assets/screenshots/b1500-workspace.png` | B1500 transfer or output workspace after analysis, showing a metric heatmap and multi-curve preview. |
+| `docs/assets/screenshots/main-workbench.png` | Main workbench preview |
+| `docs/assets/screenshots/cloud-autotest-session.png` | Cloud autotest session browser preview |
 
 ## License
 
