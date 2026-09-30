@@ -24,6 +24,7 @@ from semi_auto_curation.services.cloud_api import (
     preview_text_for_entry,
     related_session_files,
 )
+from semi_auto_curation.ui.touch_support import enable_touch_scrolling
 
 
 class ParallelPreviewPanel(QGroupBox):
@@ -44,6 +45,7 @@ class ParallelPreviewPanel(QGroupBox):
         layout = QVBoxLayout(self)
         layout.addWidget(self.state_label)
         layout.addWidget(self.scroll_area, 1)
+        enable_touch_scrolling(self)
 
     def clear_preview(self, message: str = "Select one device to preview parallel files.") -> None:
         self.state_label.setText(message)
@@ -69,6 +71,7 @@ class ParallelPreviewPanel(QGroupBox):
         for path in related:
             self.cards_layout.addWidget(_build_local_card(path))
         self.cards_layout.addStretch(1)
+        enable_touch_scrolling(self)
 
     def update_cloud_preview(
         self,
@@ -88,6 +91,7 @@ class ParallelPreviewPanel(QGroupBox):
         for entry in related:
             self.cards_layout.addWidget(_build_remote_card(config, session_id, cache_root, entry))
         self.cards_layout.addStretch(1)
+        enable_touch_scrolling(self)
 
     def _clear_cards(self) -> None:
         while self.cards_layout.count():

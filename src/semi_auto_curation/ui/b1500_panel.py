@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 from semi_auto_curation.analysis.b1500 import run_b1500_analysis
 from semi_auto_curation.models import B1500AnalysisBundle, B1500AnalysisSettings, B1500BatchResult, B1500DeviceAnalysis
 from semi_auto_curation.services.cloud_api import CloudSyncResult
+from semi_auto_curation.settings import default_source_browse_directory
 from semi_auto_curation.ui.cloud_session_dialog import CloudSessionsDialog, CloudSyncWorker
 from semi_auto_curation.ui.iv_panel import (
     HeatmapCanvas,
@@ -425,7 +426,7 @@ class B1500AnalysisPanel(QWidget):
         return row
 
     def _choose_source(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Select B1500 Source Folder", self.source_edit.text())
+        folder = QFileDialog.getExistingDirectory(self, "Select B1500 Source Folder", default_source_browse_directory())
         if folder:
             self._clear_cloud_source()
             self.source_edit.setText(folder)

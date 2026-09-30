@@ -67,6 +67,7 @@ from PySide6.QtWidgets import (
 )
 
 from semi_auto_curation.data.image_loader import infer_positions
+from semi_auto_curation.settings import default_source_browse_directory
 from semi_auto_curation.ui.iv_panel import (
     THEMES,
     HeatmapCanvas,
@@ -282,7 +283,7 @@ class ScriptPanel(QWidget):
         self._refresh_heatmap_if_ready()
 
     def _choose_source(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Select Source Folder", self.source_edit.text())
+        folder = QFileDialog.getExistingDirectory(self, "Select Source Folder", default_source_browse_directory())
         if folder:
             self.source_edit.setText(folder)
 

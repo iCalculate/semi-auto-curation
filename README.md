@@ -50,6 +50,8 @@ The application is built as a multi-workspace Qt workbench. Users can open IV, B
 | Analysis | K2450 IV fitting, B1500 transfer/output metric extraction, image-derived device metrics, and custom Python script execution. |
 | Visualization | Device-array heatmaps, selectable cells, multi-device curve previews, linear/log scale options, colormap controls, and light/dark themes. |
 | Curation | Dummy-device classification, selected-device inspection, metadata-aware array positioning, and cloud/local source workflows. |
+| Data Preview | Generic CSV/JSON preview, configurable feature aggregation, heatmaps, multi-device curves, and SAP HP6614C transfer metrics. |
+| Test History | Month, week, and day calendar views for indexed local AutoTest sessions, with filtering and workspace routing. |
 | Export | CSV and JSON exports for summaries, detailed per-device records, and downstream plotting or reporting. |
 | Extensibility | Analyzer registry pattern for adding new workspace types without rewriting the main application shell. |
 
@@ -81,6 +83,14 @@ Key outputs:
 
 The `Image Analysis` workspace provides image-derived metrics and selected-device previews for device-array inspection. The `Custom Script` workspace lets users run Python-based analysis against a data folder and visualize returned metrics as heatmaps.
 
+### Data Preview
+
+The `Data Preview` workspace recursively loads CSV files and uses matching SAP JSON sidecars for device names and array coordinates. Numeric columns can be aggregated with First, Last, Min, Max, Max |value|, Mean, or Median and displayed as heatmaps or multi-device curves. SAP HP6614C transfer data additionally exposes derived threshold-voltage, on/off-ratio, and subthreshold-swing metrics.
+
+### Test Calendar
+
+The `Test Calendar` workspace indexes timestamped AutoTest sessions under `D:\Project\semi-auto-probe\autotest_session` without modifying source data. Month, week, and day views support metadata search, category and status filters, session details, and direct routing into compatible analysis workspaces. Disk scans occur only when **Refresh** is selected.
+
 ## Quick Start
 
 Install dependencies with `uv`:
@@ -97,6 +107,14 @@ Launch the GUI:
 uv run semi-auto-curation
 ```
 
+The GUI command can also be written explicitly:
+
+```powershell
+uv run semi-auto-curation gui
+```
+
+On Windows, you can also launch the application by double-clicking `SAC.bat` in the repository root.
+
 Run IV analysis from the CLI:
 
 ```powershell
@@ -109,6 +127,16 @@ Run B1500 analysis from the CLI:
 uv run semi-auto-curation analyze b1500 --source rawdata/b1500 --output output
 ```
 
+Filter IV devices and export an SAP-compatible coordinate list:
+
+```powershell
+uv run semi-auto-curation curate iv --source rawdata/iv --output output `
+  --fit-min 0 --fit-max 5 --dummy-r-min 10G --dummy-r-max 100T `
+  --metric fit_r2 --selection-min 0.9
+```
+
+The exported JSON is compatible with SAP **AutoTest → Import List** and records exact GDS `u/v`, device names, zero-based `row/col`, the selected metric, and filter bounds. Export is rejected when selected devices lack GDS coordinates, preventing an incorrect test list.
+
 ## Data And Outputs
 
 | Data Type | Expected Input | Exported Output |
@@ -116,6 +144,7 @@ uv run semi-auto-curation analyze b1500 --source rawdata/b1500 --output output
 | K2450 IV | `*_iv.csv` plus optional adjacent metadata JSON | `iv_fit_summary.csv`, `iv_fit_detail.json` |
 | B1500 Transfer | `*_transfer_ALL_wide.csv` plus optional leakage/metadata files | `b1500_transfer_summary.csv`, `b1500_transfer_detail.json` |
 | B1500 Output | `*_output_ALL_wide.csv` plus optional leakage/metadata files | `b1500_output_summary.csv`, `b1500_output_detail.json` |
+| Generic Preview / HP6614C | CSV files plus optional matching SAP JSON sidecars | Interactive heatmaps and curve previews |
 
 The loaders use available metadata for device names, array positions, timestamps, sweep settings, and stage coordinates. When metadata is missing, the application falls back to information inferred from file names where possible.
 

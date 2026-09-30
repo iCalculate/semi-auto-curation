@@ -25,9 +25,11 @@ from dataclasses import dataclass
 from typing import Callable
 
 from semi_auto_curation.ui.b1500_panel import B1500AnalysisPanel
+from semi_auto_curation.ui.data_preview_panel import DataPreviewPanel
 from semi_auto_curation.ui.image_panel import ImageAnalysisPanel
 from semi_auto_curation.ui.iv_panel import IVAnalysisPanel
 from semi_auto_curation.ui.script_panel import ScriptPanel
+from semi_auto_curation.ui.test_calendar_panel import TestCalendarPanel
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +40,17 @@ class AnalyzerDescriptor:
 
 
 ANALYZER_REGISTRY: list[AnalyzerDescriptor] = [
+    AnalyzerDescriptor(
+        key="test_calendar",
+        label="Test Calendar",
+        panel_factory=TestCalendarPanel,
+    ),
+    # --- Fast, analysis-free inspection ---
+    AnalyzerDescriptor(
+        key="data_preview",
+        label="Data Preview",
+        panel_factory=DataPreviewPanel,
+    ),
     # --- Electrical characterisation ---
     AnalyzerDescriptor(
         key="iv",
@@ -53,6 +66,11 @@ ANALYZER_REGISTRY: list[AnalyzerDescriptor] = [
         key="b1500_output",
         label="B1500-Output",
         panel_factory=lambda: B1500AnalysisPanel("output"),
+    ),
+    AnalyzerDescriptor(
+        key="hp6614c_transfer",
+        label="HP6614C-Trans",
+        panel_factory=lambda: DataPreviewPanel(hp6614c_only=True),
     ),
     # --- Image analysis ---
     AnalyzerDescriptor(
