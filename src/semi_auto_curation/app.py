@@ -8,6 +8,7 @@ from pathlib import Path
 from semi_auto_curation.analysis.b1500 import b1500_bundle_to_dict, run_b1500_analysis
 from semi_auto_curation.analysis.iv import run_iv_batch
 from semi_auto_curation.models import B1500AnalysisSettings, IVAnalysisSettings
+from semi_auto_curation.services.curation import filter_iv_devices, export_iv_coordinate_selection
 from semi_auto_curation.utils.logging import log_error, log_info, print_banner
 from semi_auto_curation.utils.units import parse_si_number
 
@@ -53,6 +54,37 @@ def main() -> None:
         bundle = run_b1500_analysis(settings)
         print(json.dumps(b1500_bundle_to_dict(bundle), indent=2))
         return
+    if args.command == "curate" and args.data_type == "iv":
+        settings = IVAnalysisSettings(
+            source_dir=Path(args.source),
+            output_dir=Path(args.output),
+            fit_voltage_min=args.fit_min,
+            fit_voltage_max=args.fit_max,
+            dummy_min_resistance_ohm=args.dummy_r_min,
+            dummy_max_resistance_ohm=args.dummy_r_max,
+            dummy_min_r2=args.dummy_r2,
+            heatmap_metric=args.metric,
+        )
+        batch = run_iv_batch(settings)
+        selected = filter_iv_devices(
+            batch.devices,
+            args.metric,
+            args.selection_min,
+            args.selection_max,
+            not args.include_dummy,
+        )
+        selection_path = Path(args.output) / args.filename
+        export_iv_coordinate_selection(
+            selection_path,
+            selected,
+            metric=args.metric,
+            minimum=args.selection_min,
+            maximum=args.selection_max,
+            exclude_dummy=not args.include_dummy,
+            source_dir=settings.source_dir,
+        )
+        print(json.dumps({"selected_devices": len(selected), "output": str(selection_path)}, indent=2))
+        return
     log_error("Unsupported command.")
     parser.error("Unsupported command.")
 
@@ -77,4 +109,24 @@ def _build_parser() -> argparse.ArgumentParser:
     b1500.add_argument("--output", default=str(Path.cwd() / "output"))
     b1500.add_argument("--transfer-floor", type=parse_si_number, default=1e-12)
     b1500.add_argument("--output-tail-fraction", type=float, default=0.25)
+
+    curate = subparsers.add_parser("curate", help="Analyze, filter, and export selected device coordinates.")
+    curate_sub = curate.add_subparsers(dest="data_type")
+    curate_iv = curate_sub.add_parser("iv", help="Curate IV devices and export a coordinate JSON list.")
+    curate_iv.add_argument("--source", default=str(Path.cwd() / "rawdata" / "iv"))
+    curate_iv.add_argument("--output", default=str(Path.cwd() / "output"))
+    curate_iv.add_argument("--fit-min", type=parse_si_number, default=0.0)
+    curate_iv.add_argument("--fit-max", type=parse_si_number, default=1.2)
+    curate_iv.add_argument("--dummy-r-min", type=parse_si_number, default=None)
+    curate_iv.add_argument("--dummy-r-max", type=parse_si_number, default=None)
+    curate_iv.add_argument("--dummy-r2", type=parse_si_number, default=0.0)
+    curate_iv.add_argument(
+        "--metric",
+        choices=["abs_fit_resistance_ohm", "fit_resistance_ohm", "fit_r2", "max_abs_current_a"],
+        default="abs_fit_resistance_ohm",
+    )
+    curate_iv.add_argument("--selection-min", type=parse_si_number, default=None)
+    curate_iv.add_argument("--selection-max", type=parse_si_number, default=None)
+    curate_iv.add_argument("--include-dummy", action="store_true")
+    curate_iv.add_argument("--filename", default="selected_device_coordinates.json")
     return parser

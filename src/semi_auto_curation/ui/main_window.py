@@ -4,7 +4,7 @@ import os
 from importlib import metadata
 
 import psutil
-from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QThread, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QColor, QCursor, QIcon, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from semi_auto_curation.analyzers.registry import ANALYZER_REGISTRY
+from semi_auto_curation.ui.touch_support import TouchSwipeNavigator, configure_touch_application, enable_touch_scrolling
 
 
 # ---------------------------------------------------------------------------
@@ -508,6 +509,7 @@ class MainWindow(QMainWindow):
         self._subwindow_actions: dict[QMdiSubWindow, list[QAction]] = {}
         self._workspace_counter: dict[str, int] = {}
         self._row_for_subwindow: dict[QMdiSubWindow, _WorkspaceRow] = {}
+        self._workspace_swipe_navigator: TouchSwipeNavigator | None = None
         self.workspace_dock: _WorkspaceDock | None = None
         self.toggle_workspace_panel_action: QAction | None = None
 
@@ -541,6 +543,7 @@ class MainWindow(QMainWindow):
         self._build_workspace_dock()
         self._build_menu_bar()
         self._build_status_bar()
+        self._enable_touch_navigation()
 
         self.mdi_area.subWindowActivated.connect(self._on_subwindow_activated)
 
@@ -549,6 +552,32 @@ class MainWindow(QMainWindow):
         self._memory_timer.start(1000)
         self._refresh_memory_usage()
         self._refresh_menu_state()
+
+    def closeEvent(self, event) -> None:
+        running_threads = [
+            thread
+            for sub_window in self.mdi_area.subWindowList()
+            for thread in sub_window.widget().findChildren(QThread)
+            if thread.isRunning()
+        ]
+        if running_threads:
+            event.ignore()
+            self.status_label.setText("Wait for background workspace tasks to finish before closing the application.")
+            return
+        self.mdi_area.closeAllSubWindows()
+        if any(sub_window.isVisible() for sub_window in self.mdi_area.subWindowList()):
+            event.ignore()
+            return
+        super().closeEvent(event)
+
+    def _enable_touch_navigation(self) -> None:
+        viewport = self.mdi_area.viewport()
+        self._workspace_swipe_navigator = TouchSwipeNavigator(
+            viewport,
+            on_swipe_left=self._activate_next_workspace,
+            on_swipe_right=self._activate_previous_workspace,
+        )
+        enable_touch_scrolling(self)
 
     # ------------------------------------------------------------------
     # Shell / toolbar  (stable — never cleared, only show/hide actions)
@@ -602,16 +631,17 @@ class MainWindow(QMainWindow):
     # Workspace lifecycle
     # ------------------------------------------------------------------
 
-    def _new_workspace(self, key: str) -> None:
+    def _new_workspace(self, key: str):
         descriptor = next((d for d in ANALYZER_REGISTRY if d.key == key), None)
         if descriptor is None:
-            return
+            return None
 
         count = self._workspace_counter.get(key, 0) + 1
         self._workspace_counter[key] = count
         title = descriptor.label if count == 1 else f"{descriptor.label} #{count}"
 
         panel = descriptor.panel_factory()
+        enable_touch_scrolling(panel)
 
         # Build toolbar actions once; add to toolbar hidden; show on activation
         actions = panel.build_toolbar_actions() if hasattr(panel, "build_toolbar_actions") else []
@@ -639,6 +669,8 @@ class MainWindow(QMainWindow):
             panel.status_changed.connect(self.status_label.setText)
         if hasattr(panel, "progress_changed"):
             panel.progress_changed.connect(self.progress_bar.setValue)
+        if hasattr(panel, "open_session_requested"):
+            panel.open_session_requested.connect(self._open_workspace_for_source)
 
         # addSubWindow first, then resize — QMdiArea ignores sizes set before insertion
         self.mdi_area.addSubWindow(sub_window)
@@ -649,6 +681,35 @@ class MainWindow(QMainWindow):
         sub_window.move(0, 0)
         sub_window.showNormal()
         self.mdi_area.setActiveSubWindow(sub_window)
+        return panel
+
+    def _open_workspace_for_source(self, key: str, source_path: str) -> None:
+        """Open a workspace routed from the calendar and inject its source."""
+        panel = self._new_workspace(key)
+        if panel is None or not hasattr(panel, "source_edit"):
+            return
+        panel.source_edit.setText(source_path)
+        if key in {"data_preview", "hp6614c_transfer"} and hasattr(panel, "run_analysis"):
+            QTimer.singleShot(0, panel.run_analysis)
+
+    def _activate_next_workspace(self) -> None:
+        self._activate_relative_workspace(1)
+
+    def _activate_previous_workspace(self) -> None:
+        self._activate_relative_workspace(-1)
+
+    def _activate_relative_workspace(self, offset: int) -> None:
+        windows = self.mdi_area.subWindowList()
+        if len(windows) < 2:
+            return
+        active = self.mdi_area.activeSubWindow()
+        if active not in windows:
+            active = windows[0]
+        next_index = (windows.index(active) + offset) % len(windows)
+        next_window = windows[next_index]
+        if next_window.isMinimized():
+            next_window.showNormal()
+        self.mdi_area.setActiveSubWindow(next_window)
 
     def _on_subwindow_destroyed(self, sub_window: QMdiSubWindow) -> None:
         # Remove toolbar actions for this window
@@ -1161,6 +1222,7 @@ def _app_version() -> str:
 
 
 def launch() -> None:
+    configure_touch_application()
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     window.showMaximized()

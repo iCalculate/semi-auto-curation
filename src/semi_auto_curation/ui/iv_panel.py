@@ -40,6 +40,8 @@ from PySide6.QtWidgets import (
 from semi_auto_curation.analysis.iv import build_iv_database, run_iv_batch
 from semi_auto_curation.models import IVAnalysisSettings, IVBatchResult, IVDeviceAnalysis
 from semi_auto_curation.services.cloud_api import CloudSyncResult
+from semi_auto_curation.services.curation import filter_iv_devices, export_iv_coordinate_selection
+from semi_auto_curation.settings import default_source_browse_directory
 from semi_auto_curation.ui.cloud_session_dialog import CloudSessionsDialog, CloudSyncWorker
 from semi_auto_curation.ui.parallel_preview import ParallelPreviewPanel
 from semi_auto_curation.utils.logging import log_error, log_info, log_warn
@@ -386,6 +388,15 @@ class HeatmapCanvas(QWidget):
         self._draw_selection_overlay()
         self.selection_changed.emit(self.selected_devices())
 
+    def set_selected_devices(self, devices: list[IVDeviceAnalysis]) -> None:
+        self.selected_coords = {
+            (device.metadata.row, device.metadata.col)
+            for device in devices
+            if device.metadata.row is not None and device.metadata.col is not None
+        }
+        self._draw_selection_overlay()
+        self.selection_changed.emit(self.selected_devices())
+
     def copy_image_to_clipboard(self) -> None:
         QApplication.clipboard().setPixmap(self.canvas.grab())
 
@@ -640,6 +651,12 @@ class IVAnalysisPanel(QWidget):
         self.box_select_check = QCheckBox("Box Select Mode")
         self.click_multi_select_button = QPushButton("Enable Click Multi-Select")
         self.click_multi_select_button.setCheckable(True)
+        self.selection_min_edit = QLineEdit("")
+        self.selection_max_edit = QLineEdit("")
+        self.selection_exclude_dummy_check = QCheckBox("Exclude dummy devices")
+        self.selection_exclude_dummy_check.setChecked(True)
+        self.selection_summary_label = QLabel("No automatic filter applied")
+        self.selection_summary_label.setWordWrap(True)
         self.cache_label = QLabel("Cache DB: pending")
         self.selected_list = QListWidget()
         self.selected_list.setMaximumHeight(120)
@@ -666,7 +683,11 @@ class IVAnalysisPanel(QWidget):
         build_database.triggered.connect(self.load_and_build_database)
         analyze = QAction("Analyze K2450 IV", self)
         analyze.triggered.connect(self.run_analysis)
-        return [build_database, analyze]
+        filter_selection = QAction("Filter and Select", self)
+        filter_selection.triggered.connect(self.apply_selection_filter)
+        export_selection = QAction("Export Selection JSON", self)
+        export_selection.triggered.connect(self.export_selected_coordinates)
+        return [build_database, analyze, filter_selection, export_selection]
 
     def _build_ui(self) -> None:
         root = QHBoxLayout(self)
@@ -754,11 +775,23 @@ class IVAnalysisPanel(QWidget):
         return box
 
     def _build_selection_box(self) -> QWidget:
-        box = QGroupBox("Selected Devices")
+        box = QGroupBox("Device Curation and Selection")
         layout = QVBoxLayout(box)
+        filter_form = QFormLayout()
+        filter_form.addRow("Metric Min", self.selection_min_edit)
+        filter_form.addRow("Metric Max", self.selection_max_edit)
+        filter_form.addRow(self.selection_exclude_dummy_check)
+        layout.addLayout(filter_form)
+        filter_button = QPushButton("Filter and Select Devices")
+        filter_button.clicked.connect(self.apply_selection_filter)
+        layout.addWidget(filter_button)
+        layout.addWidget(self.selection_summary_label)
         layout.addWidget(self.click_multi_select_button)
         layout.addWidget(self.selected_list, 2)
         layout.addWidget(self.cache_label)
+        export_button = QPushButton("Export Selected Coordinate List (JSON)")
+        export_button.clicked.connect(self.export_selected_coordinates)
+        layout.addWidget(export_button)
         clear_button = QPushButton("Clear Selection")
         clear_button.clicked.connect(self.clear_selection)
         layout.addWidget(clear_button)
@@ -809,7 +842,7 @@ class IVAnalysisPanel(QWidget):
         return row
 
     def _choose_source(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Select 2450 IV Source Folder", self.source_edit.text())
+        folder = QFileDialog.getExistingDirectory(self, "Select 2450 IV Source Folder", default_source_browse_directory())
         if folder:
             self._clear_cloud_source()
             self.source_edit.setText(folder)
@@ -1020,6 +1053,64 @@ class IVAnalysisPanel(QWidget):
     def clear_selection(self) -> None:
         self.heatmap.clear_selection()
         self.preview_panel.clear_preview()
+
+    def apply_selection_filter(self) -> None:
+        if self.batch_result is None:
+            QMessageBox.information(self, "Analysis Required", "Run K2450 IV analysis before filtering devices.")
+            return
+        try:
+            minimum = _optional_float(self.selection_min_edit.text())
+            maximum = _optional_float(self.selection_max_edit.text())
+            selected = filter_iv_devices(
+                self.batch_result.devices,
+                self.metric_combo.currentText(),
+                minimum,
+                maximum,
+                self.selection_exclude_dummy_check.isChecked(),
+            )
+        except ValueError as exc:
+            QMessageBox.critical(self, "Invalid Filter", str(exc))
+            return
+        self.heatmap.set_selected_devices(selected)
+        self.selection_summary_label.setText(
+            f"Selected {len(selected)} of {len(self.batch_result.devices)} devices "
+            f"using {self.metric_combo.currentText()}."
+        )
+        self.status_changed.emit(f"Selected {len(selected)} devices")
+
+    def export_selected_coordinates(self) -> None:
+        if self.batch_result is None:
+            QMessageBox.information(self, "Analysis Required", "Run K2450 IV analysis before exporting a selection.")
+            return
+        devices = self.heatmap.selected_devices()
+        if not devices:
+            QMessageBox.information(self, "No Selection", "Select devices manually or use Filter and Select first.")
+            return
+        default_path = Path(self.output_edit.text().strip() or (Path.cwd() / "output")) / "selected_device_coordinates.json"
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Selected Device Coordinates",
+            str(default_path),
+            "JSON Files (*.json)",
+        )
+        if not filename:
+            return
+        try:
+            output_path = export_iv_coordinate_selection(
+                Path(filename),
+                devices,
+                metric=self.metric_combo.currentText(),
+                minimum=_optional_float(self.selection_min_edit.text()),
+                maximum=_optional_float(self.selection_max_edit.text()),
+                exclude_dummy=self.selection_exclude_dummy_check.isChecked(),
+                source_dir=self.batch_result.settings.source_dir,
+            )
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Export Failed", str(exc))
+            return
+        log_info(f"Exported {len(devices)} selected IV coordinates to {output_path}")
+        self.status_changed.emit(f"Exported {len(devices)} coordinates")
+        QMessageBox.information(self, "Export Complete", f"Saved {len(devices)} coordinates to:\n{output_path}")
 
     def _on_heatmap_selection_changed(self, devices: list[IVDeviceAnalysis]) -> None:
         self.selected_list.clear()
